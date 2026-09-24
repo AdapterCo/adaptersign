@@ -1,17 +1,17 @@
 # Adapter Sign — Docker Compose
 #
-# Este arquivo NÃO publica portas no host. Isso evita conflito com outras aplicações do
-# mesmo servidor (ex.: Traefik/Easypanel em 80/443, painel do Easypanel em 3000, outros
-# Postgres/Redis). A exposição pública é feita pelo reverse proxy existente, que roteia
-# para os serviços internos `web:3000` e `api:4000` — ver docs/deployment.md.
+# Projetado para conviver com outras aplicações em produção no mesmo servidor, sem afetá-las:
+# - nenhuma porta publicada no host (a exposição pública é feita pelo Traefik existente,
+#   via labels em docker-compose.traefik.yml, sem alterar a configuração do Traefik);
+# - nome de projeto fixo e serviços com prefixo "adaptersign-": containers, volumes, imagens
+#   e nomes DNS são exclusivos e não colidem com serviços de outras aplicações;
+# - Postgres e Redis dedicados, acessíveis apenas pela rede interna deste projeto.
 #
-# Produção (VPS), com storage e SMTP externos:
-#   docker compose up -d --build
-# Desenvolvimento / CI (publica portas em 127.0.0.1 e sobe MinIO + Mailpit):
+# Produção:
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
+# Desenvolvimento / CI (portas em 127.0.0.1 + MinIO + Mailpit):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d --build
 
-# Nome fixo: containers, volumes e rede ficam com prefixo "adaptersign-" e não
-# dependem do nome da pasta clonada.
 name: adaptersign
 
 x-api-env: &api-env
@@ -19,7 +19,9 @@ x-api-env: &api-env
   restart: unless-stopped
 
 services:
-  postgres:
+  adaptersign-postgres:
+    labels:
+      - traefik.enable=false
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -34,7 +36,9 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
+  adaptersign-redis:
+    labels:
+      - traefik.enable=false
     image: redis:7.2-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory-policy", "noeviction"]
@@ -49,7 +53,9 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   # Aplica migrations pendentes e encerra (nunca comandos destrutivos).
-  migrate:
+  adaptersign-migrate:
+    labels:
+      - traefik.enable=false
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -57,52 +63,54 @@ services:
     env_file: .env
     command: ["npx", "prisma", "migrate", "deploy"]
     depends_on:
-      postgres:
+      adaptersign-postgres:
         condition: service_healthy
     restart: "no"
 
-  api:
+  adaptersign-api:
     <<: *api-env
     image: adaptersign-api:latest
     pull_policy: never
     command: ["node", "dist/main.js"]
     depends_on:
-      migrate:
+      adaptersign-migrate:
         condition: service_completed_successfully
-      redis:
+      adaptersign-redis:
         condition: service_healthy
     expose:
       - "4000"
 
-  worker:
+  adaptersign-worker:
+    labels:
+      - traefik.enable=false
     <<: *api-env
     image: adaptersign-api:latest
     pull_policy: never
     command: ["node", "dist/worker.js"]
     depends_on:
-      migrate:
+      adaptersign-migrate:
         condition: service_completed_successfully
-      redis:
+      adaptersign-redis:
         condition: service_healthy
     healthcheck:
       disable: true
 
-  web:
+  adaptersign-web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        API_INTERNAL_URL: http://api:4000
+        API_INTERNAL_URL: http://adaptersign-api:4000
         NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME:-Adapter Sign}
     image: adaptersign-web:latest
     restart: unless-stopped
     depends_on:
-      - api
+      - adaptersign-api
     expose:
       - "3000"
 
   # ───────── Somente desenvolvimento/homologação (profile "local") ─────────
-  minio:
+  adaptersign-minio:
     profiles: ["local"]
     image: minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
@@ -113,15 +121,15 @@ services:
       - miniodata:/data
 
   # Cria o bucket PRIVADO (sem acesso anônimo).
-  minio-init:
+  adaptersign-minio-init:
     profiles: ["local"]
     image: minio/mc:latest
     depends_on:
-      - minio
+      - adaptersign-minio
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >
-        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done &&
+        until mc alias set local http://adaptersign-minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done &&
         mc mb --ignore-existing local/"$${STORAGE_BUCKET}" &&
         mc anonymous set none local/"$${STORAGE_BUCKET}"
     environment:
@@ -130,7 +138,7 @@ services:
       STORAGE_BUCKET: ${STORAGE_BUCKET}
     restart: "no"
 
-  mailpit:
+  adaptersign-mailpit:
     profiles: ["local"]
     image: axllent/mailpit:latest
 

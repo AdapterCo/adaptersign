@@ -11,15 +11,15 @@ tmpdb="restore_test_$(date -u +%Y%m%d%H%M%S)"
 
 if [ -f "$file.sha256" ]; then sha256sum -c "$file.sha256"; fi
 
-$COMPOSE exec -T postgres sh -c "createdb -U \"\$POSTGRES_USER\" $tmpdb"
-cleanup() { $COMPOSE exec -T postgres sh -c "dropdb -U \"\$POSTGRES_USER\" --if-exists $tmpdb" || true; }
+$COMPOSE exec -T adaptersign-postgres sh -c "createdb -U \"\$POSTGRES_USER\" $tmpdb"
+cleanup() { $COMPOSE exec -T adaptersign-postgres sh -c "dropdb -U \"\$POSTGRES_USER\" --if-exists $tmpdb" || true; }
 trap cleanup EXIT
 
 gpg --batch --decrypt --passphrase-file "$PASS_FILE" "$file" \
-  | $COMPOSE exec -T postgres sh -c "pg_restore -U \"\$POSTGRES_USER\" -d $tmpdb --no-owner --exit-on-error"
+  | $COMPOSE exec -T adaptersign-postgres sh -c "pg_restore -U \"\$POSTGRES_USER\" -d $tmpdb --no-owner --exit-on-error"
 
 echo "Verificações no banco restaurado:"
-$COMPOSE exec -T postgres sh -c "psql -U \"\$POSTGRES_USER\" -d $tmpdb -v ON_ERROR_STOP=1 -c \"
+$COMPOSE exec -T adaptersign-postgres sh -c "psql -U \"\$POSTGRES_USER\" -d $tmpdb -v ON_ERROR_STOP=1 -c \"
   SELECT (SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL) AS migrations,
          (SELECT count(*) FROM organizations) AS organizations,
          (SELECT count(*) FROM envelopes) AS envelopes,

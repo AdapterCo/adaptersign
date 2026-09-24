@@ -30,22 +30,22 @@ Pendências conhecidas estão em [docs/decisions.md](docs/decisions.md#limitaç�
 - API REST `/api/v1` com OpenAPI (`/api/docs`), API keys (só hash), `Idempotency-Key`, webhooks HMAC com retentativas.
 - Planos/limites/consumo configuráveis, `BillingProvider` desacoplado, painel da plataforma (somente metadados).
 - Worker BullMQ (e-mail, webhooks, finalização, expiração, lembretes, varreduras), outbox transacional.
-- Docker Compose, Nginx, backup criptografado + teste de restauração, CI.
+- Docker Compose (integração com Traefik via labels, sem conflito com outras aplicações), backup criptografado + teste de restauração, CI.
 
 ## Estrutura
 
 ```text
 apps/api   NestJS 11 + Prisma 7 (API HTTP e worker na mesma base de código)
 apps/web   Next.js 16 + React 19 + Tailwind CSS 4
-infra/     Nginx e scripts de backup
+infra/     scripts de backup
 docs/      Documentação
 ```
 
 ## Início rápido (VPS)
 
 ```bash
-cp .env.example .env   # edite TODOS os valores
-docker compose up -d --build
+cp .env.example .env   # edite TODOS os valores (inclusive TRAEFIK_*)
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
 ```
 
 Guia completo: [docs/deployment.md](docs/deployment.md).

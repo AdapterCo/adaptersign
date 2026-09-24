@@ -1,0 +1,47 @@
+# Exposição pública via o Traefik JÁ existente no servidor (provider Docker, labels).
+# Não altera a configuração do Traefik nem de outras aplicações:
+# - somente adaptersign-web e adaptersign-api entram na rede do Traefik;
+# - routers/services com prefixo "adaptersign-" (nomes únicos no Traefik);
+# - Postgres, Redis e worker continuam só na rede interna do projeto.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
+#
+# Variáveis (no .env): TRAEFIK_NETWORK, TRAEFIK_ENTRYPOINT, TRAEFIK_CERT_RESOLVER, ADAPTERSIGN_DOMAIN.
+# Veja em docs/deployment.md como descobrir os valores usados pelo seu Traefik (somente leitura).
+
+services:
+  adaptersign-api:
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      # /api e /ready vão DIRETO para a API (IP real do cliente nas evidências).
+      - traefik.http.routers.adaptersign-api.rule=Host(`${ADAPTERSIGN_DOMAIN}`) && (PathPrefix(`/api`) || Path(`/ready`))
+      - traefik.http.routers.adaptersign-api.priority=100
+      - traefik.http.routers.adaptersign-api.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.adaptersign-api.tls=true
+      - traefik.http.routers.adaptersign-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.routers.adaptersign-api.service=adaptersign-api
+      - traefik.http.services.adaptersign-api.loadbalancer.server.port=4000
+
+  adaptersign-web:
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.http.routers.adaptersign-web.rule=Host(`${ADAPTERSIGN_DOMAIN}`)
+      - traefik.http.routers.adaptersign-web.priority=10
+      - traefik.http.routers.adaptersign-web.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.adaptersign-web.tls=true
+      - traefik.http.routers.adaptersign-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.routers.adaptersign-web.service=adaptersign-web
+      - traefik.http.services.adaptersign-web.loadbalancer.server.port=3000
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:?defina TRAEFIK_NETWORK no .env (rede Docker do Traefik existente)}

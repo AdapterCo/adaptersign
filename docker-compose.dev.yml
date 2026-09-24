@@ -1,25 +1,24 @@
 # Override SOMENTE para desenvolvimento local e CI — não usar no servidor de produção.
-# Publica portas apenas em 127.0.0.1. As portas do host são configuráveis para não
-# colidirem com outros serviços da máquina (ex.: painel do Easypanel em 3000, mosquitto em 9001).
+# Publica portas apenas em 127.0.0.1, configuráveis para não colidir com serviços da máquina.
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d
 services:
-  postgres:
+  adaptersign-postgres:
     ports:
       - "127.0.0.1:${DEV_POSTGRES_PORT:-5432}:5432"
-  redis:
+  adaptersign-redis:
     ports:
       - "127.0.0.1:${DEV_REDIS_PORT:-6379}:6379"
-  api:
+  adaptersign-api:
     ports:
       - "127.0.0.1:${DEV_API_PORT:-4000}:4000"
-  web:
+  adaptersign-web:
     ports:
       - "127.0.0.1:${DEV_WEB_PORT:-3100}:3000"
-  minio:
+  adaptersign-minio:
     ports:
       - "127.0.0.1:${DEV_MINIO_PORT:-9000}:9000"
       - "127.0.0.1:${DEV_MINIO_CONSOLE_PORT:-9101}:9001"
-  mailpit:
+  adaptersign-mailpit:
     ports:
       - "127.0.0.1:${DEV_MAILPIT_UI_PORT:-8025}:8025"
       - "127.0.0.1:${DEV_MAILPIT_SMTP_PORT:-1025}:1025"

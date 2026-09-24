@@ -2,7 +2,7 @@
 # Backup criptografado do PostgreSQL (executar na VPS via cron/systemd timer).
 #   BACKUP_DIR=/var/backups/adaptersign BACKUP_PASSPHRASE_FILE=/root/.adaptersign-backup-pass \
 #   RETENTION_DAYS=30 ./infra/backup/pg-backup.sh
-# Requisitos: docker compose (serviço "postgres"), gpg.
+# Requisitos: docker compose (serviço "adaptersign-postgres"), gpg.
 # O backup só é estratégia completa com TESTE DE RESTAURAÇÃO (ver pg-restore-test.sh).
 set -euo pipefail
 
@@ -17,7 +17,7 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="$BACKUP_DIR/adaptersign-$stamp.dump.gpg"
 
 # pg_dump em formato custom (comprimido) → cifrado com AES-256 (gpg simétrico).
-$COMPOSE exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner' \
+$COMPOSE exec -T adaptersign-postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner' \
   | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-file "$PASS_FILE" -o "$out"
 
 sha256sum "$out" > "$out.sha256"

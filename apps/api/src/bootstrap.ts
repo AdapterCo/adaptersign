@@ -12,7 +12,7 @@ import { ACCESS_COOKIE } from './common/auth/tokens';
 export function configureApp(app: NestExpressApplication, config: AppConfig): void {
   const isProd = config.NODE_ENV === 'production';
 
-  // Atrás de Nginx/Traefik: número de proxies confiáveis (req.ip correto, sem spoofing).
+  // Atrás do Traefik: número de proxies confiáveis (req.ip correto, sem spoofing).
   app.set('trust proxy', config.TRUST_PROXY_HOPS);
   app.disable('x-powered-by');
   app.useBodyParser('json', { limit: '1mb' });

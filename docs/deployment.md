@@ -3,13 +3,14 @@
 ## Pré-requisitos
 
 - VPS Linux com Docker Engine e o plugin Compose v2 (`docker compose version`).
-- Reverse proxy com TLS (Traefik do Easypanel, ou Nginx) e registro DNS `sign.adapterco.com.br` (A/AAAA) apontando para a VPS.
+- Traefik já em execução no servidor (provider Docker) e registro DNS `sign.adapterco.com.br` (A/AAAA) apontando para a VPS.
 - Bucket S3-compatible **privado**: Cloudflare R2 ou Amazon S3 (recomendados em produção) ou MinIO.
 - Servidor SMTP: Amazon SES, Resend (SMTP) ou equivalente, com SPF/DKIM configurados no domínio remetente.
 
 ## Validação obrigatória antes de produção
 
-O código ainda não foi compilado nem testado (veja o README). Rode na VPS, ou numa máquina com Node 22 e Docker:
+Lint, typecheck, testes unitários e build já foram verificados. Migrations em banco real e o E2E ainda não.
+Rode numa máquina com Node 22 e Docker (de preferência **não** no servidor de produção):
 
 ```bash
 npm install                      # gera package-lock.json — versione-o
@@ -20,7 +21,7 @@ DATABASE_URL=postgresql://x:x@localhost:5432/x npm run build
 
 # E2E com infraestrutura real (perfil "local")
 cp .env.example .env             # ajuste para teste: NODE_ENV=test, URLs http://localhost, COOKIE_SECURE=false
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d postgres redis minio minio-init mailpit
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d adaptersign-postgres adaptersign-redis adaptersign-minio adaptersign-minio-init adaptersign-mailpit
 cd apps/api && npx prisma migrate deploy && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 MAILPIT_URL=http://localhost:8025 npm run test:integration
 ```
@@ -44,23 +45,32 @@ Edite o `.env`. Nenhum valor de exemplo é aceito em produção; a API recusa in
 | `APP_PUBLIC_URL`, `API_PUBLIC_URL` | ambos `https://sign.adapterco.com.br` (domínio único) |
 | `STORAGE_*` | credenciais do bucket privado (veja "Storage") |
 | `SMTP_*`, `EMAIL_FROM` | credenciais do provedor SMTP |
-| `TRUST_PROXY_HOPS` | `1` atrás do Nginx |
+| `TRUST_PROXY_HOPS` | `1` (Traefik à frente da API) |
+| `ADAPTERSIGN_DOMAIN`, `TRAEFIK_*` | domínio e parâmetros do Traefik existente (veja "Traefik") |
 
 A lista completa, com comentários, está em [.env.example](../.env.example).
 
 ```bash
-docker compose up -d --build          # postgres, redis, migrate (one-off), api, worker, web
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
 docker compose ps
-docker compose exec api node -e "fetch('http://127.0.0.1:4000/ready').then(r=>r.text()).then(console.log)"
+docker compose exec adaptersign-api node -e "fetch('http://127.0.0.1:4000/ready').then(r=>r.text()).then(console.log)"
 ```
 
-### Convivência com outras aplicações no mesmo servidor
+### Convivência com as aplicações já em produção
 
-O `docker-compose.yml` **não publica nenhuma porta no host** e usa o nome de projeto fixo `adaptersign`.
-Containers, volumes (`adaptersign_pgdata` etc.), rede e imagens (`adaptersign-api`, `adaptersign-web`) têm
-prefixo próprio. Postgres e Redis são instâncias dedicadas, acessíveis só pela rede interna do projeto.
-Assim não há conflito com Traefik/Easypanel (80/443 e painel em 3000), com outros Postgres/Redis nem com o
-mosquitto (9001). O `docker-compose.dev.yml`, que publica portas, é só para desenvolvimento e CI; não use em produção.
+O AdapterSign foi ajustado para **não interferir** nas demais aplicações do servidor:
+
+- **Portas:** nenhuma porta é publicada no host (80/443 continuam exclusivas do Traefik).
+- **Nomes:** projeto `adaptersign` e serviços com prefixo `adaptersign-`. Containers, volumes (`adaptersign_pgdata`…),
+  imagens (`adaptersign-api`, `adaptersign-web`) e **nomes DNS na rede compartilhada** são únicos, então nenhum
+  `web`/`api`/`postgres`/`redis` de outra aplicação é resolvido para o AdapterSign, nem o contrário.
+- **Rede:** só `adaptersign-web` e `adaptersign-api` entram na rede do Traefik. Postgres, Redis e worker ficam
+  apenas na rede interna do projeto.
+- **Traefik:** routers e services com nomes `adaptersign-*`, com regra restrita a `Host(sign.adapterco.com.br)`.
+  Nenhuma configuração do Traefik ou de outra aplicação é alterada.
+- **Dados:** banco, Redis e volumes dedicados; os comandos deste guia (`docker compose …`) só atuam no projeto `adaptersign`.
+
+O `docker-compose.dev.yml`, que publica portas, é só para desenvolvimento e CI; não use em produção.
 
 ### Planos (configuração)
 
@@ -68,7 +78,7 @@ Os planos ficam no banco e nunca são fixados no código. Crie o arquivo real fo
 
 ```bash
 cp apps/api/config/plans.example.json /etc/adaptersign-plans.json   # edite limites e preços
-docker compose run --rm -v /etc/adaptersign-plans.json:/tmp/plans.json:ro api node dist/cli/plans-sync.js /tmp/plans.json
+docker compose run --rm --no-deps -v /etc/adaptersign-plans.json:/tmp/plans.json:ro adaptersign-api node dist/cli/plans-sync.js /tmp/plans.json
 ```
 
 Deve existir o plano indicado em `DEFAULT_PLAN_CODE` (padrão `FREE`); sem ele a API responde `PLAN_NOT_CONFIGURED`.
@@ -78,49 +88,51 @@ Deve existir o plano indicado em `DEFAULT_PLAN_CODE` (padrão `FREE`); sem ele a
 Nenhum usuário é criado com senha padrão. Cadastre-se pela aplicação, confirme o e-mail e conceda o acesso:
 
 ```bash
-docker compose run --rm api node dist/cli/grant-platform-admin.js voce@seudominio.com.br
+docker compose run --rm --no-deps adaptersign-api node dist/cli/grant-platform-admin.js voce@seudominio.com.br
 ```
 
-### Reverse proxy
+### Traefik
 
-Regras necessárias, com HTTPS:
+A exposição é feita por **labels** em `docker-compose.traefik.yml`, lidas pelo Traefik já existente (provider Docker):
 
-| Domínio / caminho | Destino |
-| --- | --- |
-| `sign.adapterco.com.br/api/*` | `api:4000` |
-| `sign.adapterco.com.br/health`, `/ready` (opcional, monitoramento) | `api:4000` |
-| `sign.adapterco.com.br/*` | `web:3000` |
+| Router | Regra | Destino |
+| --- | --- | --- |
+| `adaptersign-api` (prioridade 100) | `Host(sign.adapterco.com.br) && (PathPrefix(/api) \|\| Path(/ready))` | `adaptersign-api:4000` |
+| `adaptersign-web` (prioridade 10) | `Host(sign.adapterco.com.br)` | `adaptersign-web:3000` |
 
-URLs resultantes: aplicação `https://sign.adapterco.com.br`, assinatura `https://sign.adapterco.com.br/sign/{token}`,
-validação pública `https://sign.adapterco.com.br/verify`, API `https://sign.adapterco.com.br/api/v1` e
-documentação OpenAPI `https://sign.adapterco.com.br/api/docs`.
+URLs: aplicação `https://sign.adapterco.com.br`, assinatura `…/sign/{token}`, validação pública `…/verify`,
+API `…/api/v1`, OpenAPI `…/api/docs`. O `/api` vai direto para a API (e não via Next.js), então o IP do cliente
+registrado nas evidências é o correto com `TRUST_PROXY_HOPS=1`.
 
-Mantenha `TRUST_PROXY_HOPS=1` (um proxy à frente da API). Encaminhe `/api` do domínio do app **diretamente** à API
-(e não via Next.js), para que o IP do cliente registrado nas evidências seja o correto.
+Defina no `.env` os parâmetros do **seu** Traefik. Descubra-os só com comandos de leitura, sem alterar nada:
 
-**Servidor com Easypanel/Traefik** (Traefik já ocupa 80/443; não instale Nginx nessas portas). Duas opções:
+```bash
+# rede, entrypoints e certresolver usados pelo Traefik em execução
+docker inspect $(docker ps -q --filter ancestor=traefik:3.6.7) --format '{{json .Args}}{{println}}{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+# como uma aplicação já publicada declara suas rotas (labels e rede)
+docker inspect adapterflow-web --format '{{json .Config.Labels}}{{println}}{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+```
 
-1. **Recomendado:** crie no Easypanel um serviço do tipo *Compose* apontando para este repositório. Defina as
-   variáveis do `.env` na aba de ambiente e configure na aba *Domains*: `sign.adapterco.com.br` → serviço `web`
-   porta 3000, e `sign.adapterco.com.br` com caminho `/api` → serviço `api` porta 4000. O Easypanel cuida do TLS.
-2. Subir com `docker compose` fora do Easypanel exige conectar `web` e `api` à rede do Traefik e registrar as rotas
-   no provider que esse Traefik usa. Confirme a configuração do seu Traefik antes; esta opção não foi testada.
+- `TRAEFIK_NETWORK`: rede Docker em que o Traefik alcança os containers.
+- `TRAEFIK_ENTRYPOINT`: entrypoint HTTPS (ex.: `websecure`, `https`), conforme os argumentos `--entrypoints.*`.
+- `TRAEFIK_CERT_RESOLVER`: nome do resolver ACME (`--certificatesresolvers.<nome>.*`).
 
-**Servidor sem proxy existente:** use `infra/nginx/adapter-sign.conf` como base. Nesse caso publique `web` e `api`
-em `127.0.0.1` (por exemplo, com um override como o `docker-compose.dev.yml`, só com esses dois serviços).
+Se o Traefik **não** tiver o provider Docker ativo (as rotas das outras aplicações vierem de arquivo), as labels
+serão ignoradas. Nesse caso, as mesmas rotas da tabela acima precisam ser declaradas no mesmo mecanismo que o
+Traefik já usa, apontando para `adaptersign-web:3000` e `adaptersign-api:4000` na rede do Traefik.
 
 ### Atualização
 
 ```bash
 git pull
-docker compose up -d --build   # o serviço migrate aplica migrations pendentes antes de api/worker
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build   # adaptersign-migrate aplica migrations antes de api/worker
 ```
 
 ## Storage
 
 - **Cloudflare R2**: `STORAGE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`, `STORAGE_REGION=auto`, `STORAGE_FORCE_PATH_STYLE=false`.
 - **Amazon S3**: deixe `STORAGE_ENDPOINT` vazio, `STORAGE_REGION=<região>`, bloqueie todo acesso público do bucket.
-- **MinIO** (perfil `local`): `http://minio:9000`, `STORAGE_FORCE_PATH_STYLE=true`. O serviço `minio-init` cria o bucket sem acesso anônimo.
+- **MinIO** (perfil `local`, só desenvolvimento): `http://adaptersign-minio:9000`, `STORAGE_FORCE_PATH_STYLE=true`. O serviço `adaptersign-minio-init` cria o bucket sem acesso anônimo.
   Observação: a distribuição de imagens da edição comunitária do MinIO mudou em 2025; confirme a disponibilidade da imagem ou use R2/S3.
 
 Regras:

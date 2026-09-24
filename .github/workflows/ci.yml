@@ -85,7 +85,7 @@ jobs:
           sed -i "s|^JWT_ACCESS_SECRET=.*|JWT_ACCESS_SECRET=$(openssl rand -hex 32)|" .env
           sed -i "s|^TOKEN_HASH_SECRET=.*|TOKEN_HASH_SECRET=$(openssl rand -hex 32)|" .env
       - name: Subir infraestrutura
-        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d postgres redis minio minio-init mailpit
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d adaptersign-postgres adaptersign-redis adaptersign-minio adaptersign-minio-init adaptersign-mailpit
       - run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - name: Migrations + testes de integração (serviços acessados via localhost)
         working-directory: apps/api

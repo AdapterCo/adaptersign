@@ -8,7 +8,7 @@ RUN if [ -f package-lock.json ]; then npm ci -w @adapter-sign/web --include-work
     else npm install -w @adapter-sign/web --include-workspace-root=false; fi
 COPY apps/web apps/web
 # Rewrites e variáveis NEXT_PUBLIC_* são resolvidos no build.
-ARG API_INTERNAL_URL=http://api:4000
+ARG API_INTERNAL_URL=http://adaptersign-api:4000
 ARG NEXT_PUBLIC_BRAND_NAME="Adapter Sign"
 ENV API_INTERNAL_URL=$API_INTERNAL_URL \
     NEXT_PUBLIC_BRAND_NAME=$NEXT_PUBLIC_BRAND_NAME \
