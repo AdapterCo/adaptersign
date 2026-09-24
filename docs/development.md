@@ -25,7 +25,8 @@ SEED_USER_PASSWORD=<uma senha local com 10+ caracteres>
 ```
 
 ```bash
-docker compose --profile local up -d postgres redis minio minio-init mailpit
+# o override publica portas em 127.0.0.1 (ajustáveis por DEV_*_PORT; web em 3100 por padrão)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d postgres redis minio minio-init mailpit
 cd apps/api
 npx prisma migrate dev          # aplica migrations e gera o client
 npm run db:seed                 # planos de exemplo + usuário dev@exemplo.test (recusa rodar em produção)

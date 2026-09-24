@@ -1,12 +1,18 @@
 # Adapter Sign — Docker Compose
 #
+# Este arquivo NÃO publica portas no host. Isso evita conflito com outras aplicações do
+# mesmo servidor (ex.: Traefik/Easypanel em 80/443, painel do Easypanel em 3000, outros
+# Postgres/Redis). A exposição pública é feita pelo reverse proxy existente, que roteia
+# para os serviços internos `web:3000` e `api:4000` — ver docs/deployment.md.
+#
 # Produção (VPS), com storage e SMTP externos:
 #   docker compose up -d --build
-# Local/homologação com MinIO + Mailpit:
-#   docker compose --profile local up -d --build
-#
-# As portas são publicadas apenas em 127.0.0.1: exponha ao público pelo reverse proxy
-# (infra/nginx/adapter-sign.conf) com HTTPS.
+# Desenvolvimento / CI (publica portas em 127.0.0.1 e sobe MinIO + Mailpit):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d --build
+
+# Nome fixo: containers, volumes e rede ficam com prefixo "adaptersign-" e não
+# dependem do nome da pasta clonada.
+name: adaptersign
 
 x-api-env: &api-env
   env_file: .env
@@ -22,8 +28,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -36,8 +40,6 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory-policy", "noeviction"]
     volumes:
       - redisdata:/data
-    ports:
-      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
       interval: 10s
@@ -51,7 +53,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    image: adapter-sign-api:latest
+    image: adaptersign-api:latest
     env_file: .env
     command: ["npx", "prisma", "migrate", "deploy"]
     depends_on:
@@ -61,7 +63,7 @@ services:
 
   api:
     <<: *api-env
-    image: adapter-sign-api:latest
+    image: adaptersign-api:latest
     pull_policy: never
     command: ["node", "dist/main.js"]
     depends_on:
@@ -69,12 +71,12 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:4000:4000"
+    expose:
+      - "4000"
 
   worker:
     <<: *api-env
-    image: adapter-sign-api:latest
+    image: adaptersign-api:latest
     pull_policy: never
     command: ["node", "dist/worker.js"]
     depends_on:
@@ -92,11 +94,12 @@ services:
       args:
         API_INTERNAL_URL: http://api:4000
         NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME:-Adapter Sign}
+    image: adaptersign-web:latest
     restart: unless-stopped
     depends_on:
       - api
-    ports:
-      - "127.0.0.1:3000:3000"
+    expose:
+      - "3000"
 
   # ───────── Somente desenvolvimento/homologação (profile "local") ─────────
   minio:
@@ -108,9 +111,6 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - miniodata:/data
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
 
   # Cria o bucket PRIVADO (sem acesso anônimo).
   minio-init:
@@ -133,9 +133,6 @@ services:
   mailpit:
     profiles: ["local"]
     image: axllent/mailpit:latest
-    ports:
-      - "127.0.0.1:8025:8025"
-      - "127.0.0.1:1025:1025"
 
 volumes:
   pgdata:

@@ -20,7 +20,7 @@ DATABASE_URL=postgresql://x:x@localhost:5432/x npm run build
 
 # E2E com infraestrutura real (perfil "local")
 cp .env.example .env             # ajuste para teste: NODE_ENV=test, URLs http://localhost, COOKIE_SECURE=false
-docker compose --profile local up -d postgres redis minio minio-init mailpit
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d postgres redis minio minio-init mailpit
 cd apps/api && npx prisma migrate deploy && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 MAILPIT_URL=http://localhost:8025 npm run test:integration
 ```
@@ -51,8 +51,16 @@ A lista completa, com comentários, está em [.env.example](../.env.example).
 ```bash
 docker compose up -d --build          # postgres, redis, migrate (one-off), api, worker, web
 docker compose ps
-curl -fsS http://127.0.0.1:4000/ready
+docker compose exec api node -e "fetch('http://127.0.0.1:4000/ready').then(r=>r.text()).then(console.log)"
 ```
+
+### Convivência com outras aplicações no mesmo servidor
+
+O `docker-compose.yml` **não publica nenhuma porta no host** e usa o nome de projeto fixo `adaptersign`.
+Containers, volumes (`adaptersign_pgdata` etc.), rede e imagens (`adaptersign-api`, `adaptersign-web`) têm
+prefixo próprio. Postgres e Redis são instâncias dedicadas, acessíveis só pela rede interna do projeto.
+Assim não há conflito com Traefik/Easypanel (80/443 e painel em 3000), com outros Postgres/Redis nem com o
+mosquitto (9001). O `docker-compose.dev.yml`, que publica portas, é só para desenvolvimento e CI; não use em produção.
 
 ### Planos (configuração)
 
@@ -75,9 +83,28 @@ docker compose run --rm api node dist/cli/grant-platform-admin.js voce@seudomini
 
 ### Reverse proxy
 
-Use `infra/nginx/adapter-sign.conf` como base: substitua os domínios, emita os certificados e recarregue o Nginx.
-Com Traefik, replique as regras: `app.<domínio>/api/*` → `api:4000`, `app.<domínio>/*` → `web:3000`,
-`api.<domínio>/*` → `api:4000`, e defina `X-Forwarded-For`/`X-Request-ID`.
+Regras necessárias, com HTTPS:
+
+| Domínio / caminho | Destino |
+| --- | --- |
+| `app.<domínio>/api/*` | `api:4000` |
+| `app.<domínio>/*` | `web:3000` |
+| `api.<domínio>/*` | `api:4000` |
+
+Mantenha `TRUST_PROXY_HOPS=1` (um proxy à frente da API). Encaminhe `/api` do domínio do app **diretamente** à API
+(e não via Next.js), para que o IP do cliente registrado nas evidências seja o correto.
+
+**Servidor com Easypanel/Traefik** (Traefik já ocupa 80/443; não instale Nginx nessas portas). Duas opções:
+
+1. **Recomendado:** crie no Easypanel um serviço do tipo *Compose* apontando para este repositório. Defina as
+   variáveis do `.env` na aba de ambiente e configure os domínios na aba *Domains*: `app.<domínio>` → serviço
+   `web` porta 3000, `app.<domínio>` com caminho `/api` → serviço `api` porta 4000, e `api.<domínio>` → `api`
+   porta 4000. O Easypanel cuida do TLS.
+2. Subir com `docker compose` fora do Easypanel exige conectar `web` e `api` à rede do Traefik e registrar as rotas
+   no provider que esse Traefik usa. Confirme a configuração do seu Traefik antes; esta opção não foi testada.
+
+**Servidor sem proxy existente:** use `infra/nginx/adapter-sign.conf` como base. Nesse caso publique `web` e `api`
+em `127.0.0.1` (por exemplo, com um override como o `docker-compose.dev.yml`, só com esses dois serviços).
 
 ### Atualização
 
