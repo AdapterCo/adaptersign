@@ -16,7 +16,7 @@ services:
       - traefik
     labels:
       - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik9}
       # /api e /ready vão DIRETO para a API (IP real do cliente nas evidências).
       - traefik.http.routers.adaptersign-api.rule=Host(`${ADAPTERSIGN_DOMAIN}`) && (PathPrefix(`/api`) || Path(`/ready`))
       - traefik.http.routers.adaptersign-api.priority=100
@@ -32,7 +32,7 @@ services:
       - traefik
     labels:
       - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik9}
       - traefik.http.routers.adaptersign-web.rule=Host(`${ADAPTERSIGN_DOMAIN}`)
       - traefik.http.routers.adaptersign-web.priority=10
       - traefik.http.routers.adaptersign-web.entrypoints=${TRAEFIK_ENTRYPOINT}
@@ -44,4 +44,4 @@ services:
 networks:
   traefik:
     external: true
-    name: ${TRAEFIK_NETWORK:?defina TRAEFIK_NETWORK no .env (rede Docker do Traefik existente)}
+    name: ${TRAEFIK_NETWORK:-traefik9}

@@ -113,7 +113,7 @@ docker inspect $(docker ps -q --filter ancestor=traefik:3.6.7) --format '{{json 
 docker inspect adapterflow-web --format '{{json .Config.Labels}}{{println}}{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
 ```
 
-- `TRAEFIK_NETWORK`: rede Docker em que o Traefik alcança os containers.
+- `TRAEFIK_NETWORK`: rede Docker em que o Traefik alcança os containers (neste servidor: `traefik9`, já é o padrão).
 - `TRAEFIK_ENTRYPOINT`: entrypoint HTTPS (ex.: `websecure`, `https`), conforme os argumentos `--entrypoints.*`.
 - `TRAEFIK_CERT_RESOLVER`: nome do resolver ACME (`--certificatesresolvers.<nome>.*`).
 
