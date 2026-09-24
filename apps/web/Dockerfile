@@ -9,11 +9,14 @@ RUN if [ -f package-lock.json ]; then npm ci -w @adapter-sign/web --include-work
 # O package-lock gerado no Windows não registra os binários nativos Linux (npm/cli#4828).
 # Instala-os na MESMA versão já resolvida, para a arquitetura do build (x64/arm64), num
 # diretório isolado, e copia para node_modules sem alterar o restante da árvore.
+# (Versões lidas direto do package.json no disco: alguns pacotes bloqueiam o subpath via "exports".)
 RUN set -eu; \
+    pkgv() { node -e "const fs=require('fs');for(const d of ['node_modules','apps/web/node_modules']){try{process.stdout.write(JSON.parse(fs.readFileSync(d+'/'+process.argv[1]+'/package.json','utf8')).version);process.exit(0)}catch(e){}}console.error('nao encontrado: '+process.argv[1]);process.exit(1)" "$1"; }; \
     ARCH="$(node -p process.arch)"; \
-    LCSS="$(node -p "require('lightningcss/package.json').version")"; \
-    OXIDE="$(node -p "require('@tailwindcss/oxide/package.json').version")"; \
-    NEXT="$(node -p "require('next/package.json').version")"; \
+    LCSS="$(pkgv lightningcss)"; \
+    OXIDE="$(pkgv @tailwindcss/oxide)"; \
+    NEXT="$(pkgv next)"; \
+    echo "binários nativos: linux-${ARCH} lightningcss@${LCSS} oxide@${OXIDE} next-swc@${NEXT}"; \
     mkdir -p /tmp/native && cd /tmp/native && npm init -y >/dev/null; \
     npm install --no-save --no-audit --no-fund \
       "lightningcss-linux-${ARCH}-gnu@${LCSS}" \
