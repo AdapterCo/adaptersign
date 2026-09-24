@@ -1,0 +1,10 @@
+{
+  "$comment": "Exemplo de configuração de planos. Valores ilustrativos — defina limites e preços reais no arquivo de produção (fora do repositório). null = ilimitado.",
+  "plans": [
+    { "code": "FREE", "name": "Free", "monthlyEnvelopes": 5, "monthlyDocuments": 10, "storageLimitBytes": "104857600", "usersLimit": 1, "apiAccess": false, "webhooks": false, "branding": false, "retentionDays": null },
+    { "code": "STARTER", "name": "Starter", "monthlyEnvelopes": 50, "monthlyDocuments": 100, "storageLimitBytes": "2147483648", "usersLimit": 3, "apiAccess": false, "webhooks": false, "branding": false, "retentionDays": null },
+    { "code": "PRO", "name": "Pro", "monthlyEnvelopes": 300, "monthlyDocuments": 600, "storageLimitBytes": "10737418240", "usersLimit": 10, "apiAccess": true, "webhooks": true, "branding": false, "retentionDays": null },
+    { "code": "BUSINESS", "name": "Business", "monthlyEnvelopes": 1500, "monthlyDocuments": 3000, "storageLimitBytes": "53687091200", "usersLimit": 50, "apiAccess": true, "webhooks": true, "branding": true, "retentionDays": null },
+    { "code": "ENTERPRISE", "name": "Enterprise", "monthlyEnvelopes": null, "monthlyDocuments": null, "storageLimitBytes": null, "usersLimit": null, "apiAccess": true, "webhooks": true, "branding": true, "retentionDays": null }
+  ]
+}

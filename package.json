@@ -1,0 +1,20 @@
+{
+  "name": "adapter-sign",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plataforma SaaS de assinatura eletrônica de documentos",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "audit:deps": "npm audit --omit=dev --audit-level=high"
+  }
+}

@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+apps/api/src/generated/
+apps/web/public/pdf.worker.min.mjs
+
+# Segredos — nunca versionar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+config/plans.json
+
+# Backups locais
+backups/
+*.dump
+*.dump.gpg
+
+.DS_Store
+Thumbs.db

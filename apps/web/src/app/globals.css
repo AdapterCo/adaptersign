@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* Tokens de design centralizados (white label futuro: sobrescrever --color-brand*). */
+@theme {
+  --color-brand: #1f4fd1;
+  --color-brand-dark: #173da3;
+  --color-brand-soft: #e8eefc;
+  --color-ink: #1b2333;
+  --color-muted: #5b6475;
+  --color-line: #e3e7ef;
+  --color-canvas: #f4f6fa;
+  --color-ok: #0a7a48;
+  --color-warn: #a15c00;
+  --color-bad: #b42318;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* Foco sempre visível (acessibilidade). */
+:focus-visible {
+  outline: 3px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

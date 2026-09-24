@@ -1,0 +1,760 @@
+// Adapter Sign — schema do banco (PostgreSQL).
+// Convenções: tabelas e colunas em snake_case (@@map/@map), IDs UUIDv7,
+// datas sempre em UTC (timestamptz). Toda entidade empresarial possui organization_id.
+// Alterações SEMPRE via migrations (prisma migrate dev / deploy).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum UserTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+enum DocumentStatus {
+  ACTIVE
+  LOCKED
+}
+
+enum EnvelopeStatus {
+  DRAFT
+  ACTIVE
+  PARTIALLY_SIGNED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+  DECLINED
+}
+
+enum SigningMode {
+  PARALLEL
+  SEQUENTIAL
+}
+
+enum SignerStatus {
+  PENDING
+  INVITED
+  VIEWED
+  AUTHENTICATED
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+enum SignerRole {
+  SIGNER
+  APPROVER
+  WITNESS
+}
+
+// Métodos futuros existem no enum para estabilidade do schema, mas só são
+// habilitados pelo registro de métodos quando a integração real existir.
+enum AuthMethod {
+  EMAIL
+  EMAIL_OTP
+  SMS_OTP
+  WHATSAPP_OTP
+  DOCUMENT
+  SELFIE
+  BIOMETRICS
+  CERTIFICATE
+  ICP_BRASIL
+}
+
+enum SignatureMethod {
+  TYPED
+  DRAWN
+}
+
+enum ActorType {
+  USER
+  SIGNER
+  API_KEY
+  SYSTEM
+  PLATFORM_ADMIN
+  PUBLIC
+}
+
+enum LegalTextKind {
+  TERMS
+  PRIVACY_POLICY
+  SIGNATURE_CONSENT
+}
+
+enum EvidenceReportStatus {
+  GENERATED
+  FAILED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  RETRYING
+  DEAD
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+enum UsageMetric {
+  ENVELOPES_CREATED
+  DOCUMENTS_UPLOADED
+  SIGNATURES_COMPLETED
+  STORAGE_BYTES
+  API_REQUESTS
+}
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+// ───────────────────────────── SaaS ─────────────────────────────
+
+model User {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  email           String    @unique
+  name            String
+  passwordHash    String    @map("password_hash")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  isPlatformAdmin Boolean   @default(false) @map("is_platform_admin")
+  // Preparação para MFA administrativo (ainda não habilitado).
+  mfaEnabled      Boolean   @default(false) @map("mfa_enabled")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  memberships OrganizationMember[]
+  sessions    Session[]
+  tokens      UserToken[]
+
+  @@map("users")
+}
+
+model Organization {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  name          String
+  slug          String    @unique
+  // White label futuro: campos preparados, não expostos na UI do MVP.
+  brandName     String?   @map("brand_name")
+  brandColor    String?   @map("brand_color")
+  brandLogoKey  String?   @map("brand_logo_key")
+  // Política de retenção (dias) — null = sem expurgo automático.
+  retentionDays Int?      @map("retention_days")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  members      OrganizationMember[]
+  documents    Document[]
+  envelopes    Envelope[]
+  apiKeys      ApiKey[]
+  webhooks     WebhookEndpoint[]
+  subscription Subscription?
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  organizationId String     @map("organization_id") @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  role           MemberRole
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+// Uma "Session" representa um login (família de refresh tokens).
+model Session {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  ip             String?
+  userAgent      String?   @map("user_agent")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt     DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedReason  String?   @map("revoked_reason")
+
+  user          User           @relation(fields: [userId], references: [id])
+  refreshTokens RefreshToken[]
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  sessionId String    @map("session_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  session Session @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@map("refresh_tokens")
+}
+
+model UserToken {
+  id        String           @id @default(uuid(7)) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  purpose   UserTokenPurpose
+  tokenHash String           @unique @map("token_hash")
+  expiresAt DateTime         @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime?        @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, purpose])
+  @@map("user_tokens")
+}
+
+// ───────────────────────────── Documentos ─────────────────────────────
+
+model Document {
+  id                String         @id @default(uuid(7)) @db.Uuid
+  organizationId    String         @map("organization_id") @db.Uuid
+  title             String
+  originalFilename  String         @map("original_filename")
+  status            DocumentStatus @default(ACTIVE)
+  createdById       String?        @map("created_by_id") @db.Uuid
+  createdByApiKeyId String?        @map("created_by_api_key_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime?      @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  versions     DocumentVersion[]
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, status])
+  @@map("documents")
+}
+
+// Versões são imutáveis (trigger impede UPDATE/DELETE).
+model DocumentVersion {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  documentId     String   @map("document_id") @db.Uuid
+  versionNumber  Int      @map("version_number")
+  filename       String
+  mimeType       String   @map("mime_type")
+  sizeBytes      BigInt   @map("size_bytes")
+  pageCount      Int      @map("page_count")
+  storageKey     String   @unique @map("storage_key")
+  sha256         String
+  createdById    String?  @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  document          Document           @relation(fields: [documentId], references: [id])
+  envelopeDocuments EnvelopeDocument[]
+
+  @@unique([documentId, versionNumber])
+  @@index([organizationId])
+  @@index([sha256])
+  @@map("document_versions")
+}
+
+// ───────────────────────────── Envelopes ─────────────────────────────
+
+model Envelope {
+  id                      String         @id @default(uuid(7)) @db.Uuid
+  organizationId          String         @map("organization_id") @db.Uuid
+  title                   String
+  message                 String?
+  status                  EnvelopeStatus @default(DRAFT)
+  signingMode             SigningMode    @default(PARALLEL) @map("signing_mode")
+  publicValidationCode    String         @unique @map("public_validation_code")
+  expiresAt               DateTime?      @map("expires_at") @db.Timestamptz(3)
+  reminderIntervalHours   Int?           @map("reminder_interval_hours")
+  createdById             String?        @map("created_by_id") @db.Uuid
+  createdByApiKeyId       String?        @map("created_by_api_key_id") @db.Uuid
+  activatedAt             DateTime?      @map("activated_at") @db.Timestamptz(3)
+  completedAt             DateTime?      @map("completed_at") @db.Timestamptz(3)
+  expiredAt               DateTime?      @map("expired_at") @db.Timestamptz(3)
+  cancelledAt             DateTime?      @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById           String?        @map("cancelled_by_id") @db.Uuid
+  cancelReason            String?        @map("cancel_reason")
+  declinedAt              DateTime?      @map("declined_at") @db.Timestamptz(3)
+  // Marcado quando todos os signatários obrigatórios concluíram; a finalização
+  // (evidências + COMPLETED) é feita pelo worker de forma atômica.
+  finalizationRequestedAt DateTime?      @map("finalization_requested_at") @db.Timestamptz(3)
+  createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  documents      EnvelopeDocument[]
+  signers        Signer[]
+  evidenceReport EvidenceReport?
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@index([status, expiresAt])
+  @@map("envelopes")
+}
+
+model EnvelopeDocument {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  envelopeId        String   @map("envelope_id") @db.Uuid
+  documentVersionId String   @map("document_version_id") @db.Uuid
+  position          Int
+  // Hash do original no momento da inclusão (cópia para verificação independente).
+  originalSha256    String   @map("original_sha256")
+  finalStorageKey   String?  @unique @map("final_storage_key")
+  finalSha256       String?  @map("final_sha256")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  envelope        Envelope        @relation(fields: [envelopeId], references: [id])
+  documentVersion DocumentVersion @relation(fields: [documentVersionId], references: [id])
+
+  @@unique([envelopeId, documentVersionId])
+  @@unique([envelopeId, position])
+  @@index([organizationId])
+  @@index([documentVersionId])
+  @@index([finalSha256])
+  @@map("envelope_documents")
+}
+
+model Signer {
+  id              String       @id @default(uuid(7)) @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  envelopeId      String       @map("envelope_id") @db.Uuid
+  name            String
+  email           String
+  phone           String?
+  // CPF cifrado (AES-256-GCM) + 2 últimos dígitos para exibição mascarada.
+  cpfEncrypted    String?      @map("cpf_encrypted")
+  cpfLast2        String?      @map("cpf_last2")
+  role            SignerRole   @default(SIGNER)
+  signingGroup    Int          @default(1) @map("signing_group")
+  status          SignerStatus @default(PENDING)
+  authMethod      AuthMethod   @default(EMAIL_OTP) @map("auth_method")
+  required        Boolean      @default(true)
+  invitedAt       DateTime?    @map("invited_at") @db.Timestamptz(3)
+  viewedAt        DateTime?    @map("viewed_at") @db.Timestamptz(3)
+  authenticatedAt DateTime?    @map("authenticated_at") @db.Timestamptz(3)
+  signedAt        DateTime?    @map("signed_at") @db.Timestamptz(3)
+  declinedAt      DateTime?    @map("declined_at") @db.Timestamptz(3)
+  declineReason   String?      @map("decline_reason")
+  lastRemindedAt  DateTime?    @map("last_reminded_at") @db.Timestamptz(3)
+  reminderCount   Int          @default(0) @map("reminder_count")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  envelope          Envelope                  @relation(fields: [envelopeId], references: [id])
+  accessTokens      SignerAccessToken[]
+  signatureSessions SignatureSession[]
+  challenges        AuthenticationChallenge[]
+  consents          Consent[]
+  signature         Signature?
+
+  @@unique([envelopeId, email])
+  @@index([organizationId])
+  @@index([envelopeId, signingGroup])
+  @@index([email])
+  @@map("signers")
+}
+
+// Token do link de convite (/sign/{token}); somente o hash é persistido.
+model SignerAccessToken {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  signerId   String    @map("signer_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  signer Signer @relation(fields: [signerId], references: [id])
+
+  @@index([signerId])
+  @@map("signer_access_tokens")
+}
+
+// Sessão do signatário, limitada ao processo (não dá acesso ao dashboard).
+model SignatureSession {
+  id              String      @id @default(uuid(7)) @db.Uuid
+  signerId        String      @map("signer_id") @db.Uuid
+  envelopeId      String      @map("envelope_id") @db.Uuid
+  tokenHash       String      @unique @map("token_hash")
+  authenticatedAt DateTime?   @map("authenticated_at") @db.Timestamptz(3)
+  authMethod      AuthMethod? @map("auth_method")
+  ip              String?
+  userAgent       String?     @map("user_agent")
+  expiresAt       DateTime    @map("expires_at") @db.Timestamptz(3)
+  revokedAt       DateTime?   @map("revoked_at") @db.Timestamptz(3)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  signer     Signer      @relation(fields: [signerId], references: [id])
+  signatures Signature[]
+
+  @@index([signerId])
+  @@map("signature_sessions")
+}
+
+model AuthenticationChallenge {
+  id                 String     @id @default(uuid(7)) @db.Uuid
+  signerId           String     @map("signer_id") @db.Uuid
+  signatureSessionId String     @map("signature_session_id") @db.Uuid
+  method             AuthMethod
+  codeHash           String     @map("code_hash")
+  destinationMasked  String     @map("destination_masked")
+  attempts           Int        @default(0)
+  maxAttempts        Int        @map("max_attempts")
+  expiresAt          DateTime   @map("expires_at") @db.Timestamptz(3)
+  consumedAt         DateTime?  @map("consumed_at") @db.Timestamptz(3)
+  invalidatedAt      DateTime?  @map("invalidated_at") @db.Timestamptz(3)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  signer Signer @relation(fields: [signerId], references: [id])
+
+  @@index([signerId, createdAt])
+  @@map("authentication_challenges")
+}
+
+model LegalTextVersion {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  kind        LegalTextKind
+  version     String
+  content     String
+  sha256      String
+  publishedAt DateTime      @default(now()) @map("published_at") @db.Timestamptz(3)
+
+  consents Consent[]
+
+  @@unique([kind, version])
+  @@map("legal_text_versions")
+}
+
+model Consent {
+  id                 String   @id @default(uuid(7)) @db.Uuid
+  organizationId     String   @map("organization_id") @db.Uuid
+  envelopeId         String   @map("envelope_id") @db.Uuid
+  signerId           String   @map("signer_id") @db.Uuid
+  legalTextVersionId String   @map("legal_text_version_id") @db.Uuid
+  accepted           Boolean
+  documentHashes     Json     @map("document_hashes")
+  ip                 String?
+  userAgent          String?  @map("user_agent")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  signer           Signer           @relation(fields: [signerId], references: [id])
+  legalTextVersion LegalTextVersion @relation(fields: [legalTextVersionId], references: [id])
+  signature        Signature?
+
+  @@index([envelopeId])
+  @@index([signerId])
+  @@map("consents")
+}
+
+// Uma única assinatura válida por signatário (unique signer_id) — idempotência.
+model Signature {
+  id                 String          @id @default(uuid(7)) @db.Uuid
+  organizationId     String          @map("organization_id") @db.Uuid
+  envelopeId         String          @map("envelope_id") @db.Uuid
+  signerId           String          @unique @map("signer_id") @db.Uuid
+  consentId          String          @unique @map("consent_id") @db.Uuid
+  signatureSessionId String          @map("signature_session_id") @db.Uuid
+  method             SignatureMethod
+  typedName          String?         @map("typed_name")
+  assetStorageKey    String?         @map("asset_storage_key")
+  assetSha256        String?         @map("asset_sha256")
+  authMethod         AuthMethod      @map("auth_method")
+  evidence           Json
+  ip                 String?
+  userAgent          String?         @map("user_agent")
+  signedAt           DateTime        @map("signed_at") @db.Timestamptz(3)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  signer           Signer           @relation(fields: [signerId], references: [id])
+  consent          Consent          @relation(fields: [consentId], references: [id])
+  signatureSession SignatureSession @relation(fields: [signatureSessionId], references: [id])
+
+  @@index([envelopeId])
+  @@map("signatures")
+}
+
+// ───────────────────────────── Auditoria / Evidências ─────────────────────────────
+
+// Append-only (trigger impede UPDATE/DELETE). Encadeamento por chain_key:
+//   "envelope:<id>" | "org:<id>" | "platform"
+model AuditEvent {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  chainKey       String    @map("chain_key")
+  sequence       Int
+  organizationId String?   @map("organization_id") @db.Uuid
+  envelopeId     String?   @map("envelope_id") @db.Uuid
+  documentId     String?   @map("document_id") @db.Uuid
+  signerId       String?   @map("signer_id") @db.Uuid
+  actorType      ActorType @map("actor_type")
+  actorId        String?   @map("actor_id")
+  eventType      String    @map("event_type")
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamptz(3)
+  ip             String?
+  userAgent      String?   @map("user_agent")
+  requestId      String?   @map("request_id")
+  metadata       Json
+  previousHash   String    @map("previous_hash")
+  eventHash      String    @unique @map("event_hash")
+
+  @@unique([chainKey, sequence])
+  @@index([organizationId, occurredAt])
+  @@index([envelopeId])
+  @@index([documentId])
+  @@map("audit_events")
+}
+
+model EvidenceReport {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  envelopeId     String               @unique @map("envelope_id") @db.Uuid
+  status         EvidenceReportStatus
+  storageKey     String               @unique @map("storage_key")
+  sha256         String
+  chainHeadHash  String               @map("chain_head_hash")
+  generatedAt    DateTime             @map("generated_at") @db.Timestamptz(3)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  envelope Envelope @relation(fields: [envelopeId], references: [id])
+
+  @@index([sha256])
+  @@map("evidence_reports")
+}
+
+// Outbox transacional: eventos de domínio gravados na mesma transação da mudança
+// de estado e processados pelo worker (notificações, webhooks, finalização).
+model OutboxEvent {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  type           String
+  payload        Json
+  requestId      String?   @map("request_id")
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([processedAt, createdAt])
+  @@map("outbox_events")
+}
+
+// ───────────────────────────── Notificações ─────────────────────────────
+
+model Notification {
+  id                String             @id @default(uuid(7)) @db.Uuid
+  organizationId    String?            @map("organization_id") @db.Uuid
+  envelopeId        String?            @map("envelope_id") @db.Uuid
+  signerId          String?            @map("signer_id") @db.Uuid
+  channel           String             @default("EMAIL")
+  template          String
+  recipient         String
+  // Somente identificadores (nunca tokens, OTP ou outros segredos).
+  data              Json               @default("{}")
+  dedupeKey         String             @unique @map("dedupe_key")
+  status            NotificationStatus @default(PENDING)
+  attempts          Int                @default(0)
+  lastError         String?            @map("last_error")
+  providerMessageId String?            @map("provider_message_id")
+  sentAt            DateTime?          @map("sent_at") @db.Timestamptz(3)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([organizationId, createdAt])
+  @@index([envelopeId])
+  @@map("notifications")
+}
+
+// ───────────────────────────── Integrações ─────────────────────────────
+
+model WebhookEndpoint {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  url             String
+  description     String?
+  // Segredo HMAC cifrado (AES-256-GCM); necessário em claro apenas para assinar.
+  secretEncrypted String    @map("secret_encrypted")
+  secretPrefix    String    @map("secret_prefix")
+  events          String[]
+  active          Boolean   @default(true)
+  createdById     String?   @map("created_by_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  deliveries   WebhookDelivery[]
+
+  @@index([organizationId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid(7)) @db.Uuid
+  organizationId String                @map("organization_id") @db.Uuid
+  endpointId     String                @map("endpoint_id") @db.Uuid
+  eventId        String                @map("event_id") @db.Uuid
+  eventType      String                @map("event_type")
+  payload        Json
+  status         WebhookDeliveryStatus @default(PENDING)
+  attempts       Int                   @default(0)
+  nextAttemptAt  DateTime?             @map("next_attempt_at") @db.Timestamptz(3)
+  lastStatusCode Int?                  @map("last_status_code")
+  lastError      String?               @map("last_error")
+  deliveredAt    DateTime?             @map("delivered_at") @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  endpoint    WebhookEndpoint          @relation(fields: [endpointId], references: [id])
+  attemptsLog WebhookDeliveryAttempt[]
+
+  @@unique([endpointId, eventId])
+  @@index([organizationId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@map("webhook_deliveries")
+}
+
+model WebhookDeliveryAttempt {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  deliveryId     String   @map("delivery_id") @db.Uuid
+  attempt        Int
+  statusCode     Int?     @map("status_code")
+  responseTimeMs Int?     @map("response_time_ms")
+  error          String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  delivery WebhookDelivery @relation(fields: [deliveryId], references: [id])
+
+  @@unique([deliveryId, attempt])
+  @@map("webhook_delivery_attempts")
+}
+
+model ApiKey {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  organizationId String     @map("organization_id") @db.Uuid
+  name           String
+  prefix         String     @unique
+  keyHash        String     @unique @map("key_hash")
+  role           MemberRole @default(MEMBER)
+  createdById    String?    @map("created_by_id") @db.Uuid
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt     DateTime?  @map("last_used_at") @db.Timestamptz(3)
+  expiresAt      DateTime?  @map("expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime?  @map("revoked_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@map("api_keys")
+}
+
+model IdempotencyRecord {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  scope          String
+  key            String
+  requestHash    String            @map("request_hash")
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus Int?              @map("response_status")
+  responseBody   Json?             @map("response_body")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt      DateTime          @map("expires_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
+
+// ───────────────────────────── Comercial ─────────────────────────────
+
+// Planos são configuração (tabela), nunca valores fixos no código. Limite null = ilimitado.
+model Plan {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  code              String   @unique
+  name              String
+  monthlyEnvelopes  Int?     @map("monthly_envelopes")
+  monthlyDocuments  Int?     @map("monthly_documents")
+  storageLimitBytes BigInt?  @map("storage_limit_bytes")
+  usersLimit        Int?     @map("users_limit")
+  apiAccess         Boolean  @default(false) @map("api_access")
+  webhooks          Boolean  @default(false)
+  branding          Boolean  @default(false)
+  retentionDays     Int?     @map("retention_days")
+  priceCents        Int?     @map("price_cents")
+  currency          String?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                 String             @id @default(uuid(7)) @db.Uuid
+  organizationId     String             @unique @map("organization_id") @db.Uuid
+  planId             String             @map("plan_id") @db.Uuid
+  status             SubscriptionStatus
+  provider           String
+  providerReference  String?            @map("provider_reference")
+  currentPeriodStart DateTime           @map("current_period_start") @db.Timestamptz(3)
+  currentPeriodEnd   DateTime?          @map("current_period_end") @db.Timestamptz(3)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plan         Plan         @relation(fields: [planId], references: [id])
+
+  @@index([planId])
+  @@map("subscriptions")
+}
+
+// period: "YYYY-MM" (UTC) para métricas mensais; "total" para STORAGE_BYTES.
+model UsageRecord {
+  id             String      @id @default(uuid(7)) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  metric         UsageMetric
+  period         String
+  quantity       BigInt      @default(0)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, metric, period])
+  @@map("usage_records")
+}
