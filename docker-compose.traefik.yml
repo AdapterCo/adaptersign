@@ -1,13 +1,16 @@
 # Exposição pública via o Traefik JÁ existente no servidor (provider Docker, labels).
 # Não altera a configuração do Traefik nem de outras aplicações:
 # - somente adaptersign-web e adaptersign-api entram na rede do Traefik;
-# - routers/services com prefixo "adaptersign-" (nomes únicos no Traefik);
+# - routers/services/middlewares com prefixo "adaptersign-" (nomes únicos no Traefik);
+# - regras restritas ao Host do AdapterSign;
 # - Postgres, Redis e worker continuam só na rede interna do projeto.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
 #
-# Variáveis (no .env): TRAEFIK_NETWORK, TRAEFIK_ENTRYPOINT, TRAEFIK_CERT_RESOLVER, ADAPTERSIGN_DOMAIN.
-# Veja em docs/deployment.md como descobrir os valores usados pelo seu Traefik (somente leitura).
+# Padrões conforme o Traefik deste servidor (rede traefik9, entrypoints http/https,
+# resolver letsencrypt, provider Docker com exposedByDefault=false). Podem ser
+# sobrescritos no .env: ADAPTERSIGN_DOMAIN, TRAEFIK_NETWORK, TRAEFIK_ENTRYPOINT,
+# TRAEFIK_HTTP_ENTRYPOINT, TRAEFIK_CERT_RESOLVER.
 
 services:
   adaptersign-api:
@@ -18,11 +21,11 @@ services:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-traefik9}
       # /api e /ready vão DIRETO para a API (IP real do cliente nas evidências).
-      - traefik.http.routers.adaptersign-api.rule=Host(`${ADAPTERSIGN_DOMAIN}`) && (PathPrefix(`/api`) || Path(`/ready`))
+      - traefik.http.routers.adaptersign-api.rule=Host(`${ADAPTERSIGN_DOMAIN:-sign.adapterco.com.br}`) && (PathPrefix(`/api`) || Path(`/ready`))
       - traefik.http.routers.adaptersign-api.priority=100
-      - traefik.http.routers.adaptersign-api.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.adaptersign-api.entrypoints=${TRAEFIK_ENTRYPOINT:-https}
       - traefik.http.routers.adaptersign-api.tls=true
-      - traefik.http.routers.adaptersign-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.routers.adaptersign-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
       - traefik.http.routers.adaptersign-api.service=adaptersign-api
       - traefik.http.services.adaptersign-api.loadbalancer.server.port=4000
 
@@ -33,13 +36,20 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-traefik9}
-      - traefik.http.routers.adaptersign-web.rule=Host(`${ADAPTERSIGN_DOMAIN}`)
+      - traefik.http.routers.adaptersign-web.rule=Host(`${ADAPTERSIGN_DOMAIN:-sign.adapterco.com.br}`)
       - traefik.http.routers.adaptersign-web.priority=10
-      - traefik.http.routers.adaptersign-web.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.adaptersign-web.entrypoints=${TRAEFIK_ENTRYPOINT:-https}
       - traefik.http.routers.adaptersign-web.tls=true
-      - traefik.http.routers.adaptersign-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.routers.adaptersign-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
       - traefik.http.routers.adaptersign-web.service=adaptersign-web
       - traefik.http.services.adaptersign-web.loadbalancer.server.port=3000
+      # HTTP → HTTPS somente para o host do AdapterSign.
+      - traefik.http.routers.adaptersign-http.rule=Host(`${ADAPTERSIGN_DOMAIN:-sign.adapterco.com.br}`)
+      - traefik.http.routers.adaptersign-http.entrypoints=${TRAEFIK_HTTP_ENTRYPOINT:-http}
+      - traefik.http.routers.adaptersign-http.middlewares=adaptersign-https-redirect
+      - traefik.http.routers.adaptersign-http.service=adaptersign-web
+      - traefik.http.middlewares.adaptersign-https-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.adaptersign-https-redirect.redirectscheme.permanent=true
 
 networks:
   traefik:

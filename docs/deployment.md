@@ -114,8 +114,8 @@ docker inspect adapterflow-web --format '{{json .Config.Labels}}{{println}}{{ran
 ```
 
 - `TRAEFIK_NETWORK`: rede Docker em que o Traefik alcança os containers (neste servidor: `traefik9`, já é o padrão).
-- `TRAEFIK_ENTRYPOINT`: entrypoint HTTPS (ex.: `websecure`, `https`), conforme os argumentos `--entrypoints.*`.
-- `TRAEFIK_CERT_RESOLVER`: nome do resolver ACME (`--certificatesresolvers.<nome>.*`).
+- `TRAEFIK_ENTRYPOINT`: entrypoint HTTPS (neste servidor: `https`, já é o padrão; `TRAEFIK_HTTP_ENTRYPOINT`=`http` redireciona para HTTPS).
+- `TRAEFIK_CERT_RESOLVER`: resolver ACME (neste servidor: `letsencrypt`, já é o padrão).
 
 Se o Traefik **não** tiver o provider Docker ativo (as rotas das outras aplicações vierem de arquivo), as labels
 serão ignoradas. Nesse caso, as mesmas rotas da tabela acima precisam ser declaradas no mesmo mecanismo que o
