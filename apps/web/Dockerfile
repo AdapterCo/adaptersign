@@ -6,6 +6,22 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN if [ -f package-lock.json ]; then npm ci -w @adapter-sign/web --include-workspace-root=false; \
     else npm install -w @adapter-sign/web --include-workspace-root=false; fi
+# O package-lock gerado no Windows não registra os binários nativos Linux (npm/cli#4828).
+# Instala-os na MESMA versão já resolvida, para a arquitetura do build (x64/arm64), num
+# diretório isolado, e copia para node_modules sem alterar o restante da árvore.
+RUN set -eu; \
+    ARCH="$(node -p process.arch)"; \
+    LCSS="$(node -p "require('lightningcss/package.json').version")"; \
+    OXIDE="$(node -p "require('@tailwindcss/oxide/package.json').version")"; \
+    NEXT="$(node -p "require('next/package.json').version")"; \
+    mkdir -p /tmp/native && cd /tmp/native && npm init -y >/dev/null; \
+    npm install --no-save --no-audit --no-fund \
+      "lightningcss-linux-${ARCH}-gnu@${LCSS}" \
+      "@tailwindcss/oxide-linux-${ARCH}-gnu@${OXIDE}" \
+      "@next/swc-linux-${ARCH}-gnu@${NEXT}"; \
+    rm -f /tmp/native/node_modules/.package-lock.json; \
+    cp -r /tmp/native/node_modules/. /app/node_modules/; \
+    rm -rf /tmp/native
 COPY apps/web apps/web
 # Rewrites e variáveis NEXT_PUBLIC_* são resolvidos no build.
 ARG API_INTERNAL_URL=http://adaptersign-api:4000
