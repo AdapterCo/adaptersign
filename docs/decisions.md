@@ -22,7 +22,7 @@ Todas as licenças são MIT, MIT-0 ou Apache-2.0. Rode `npm audit` antes de cada
 - **Outbox transacional** para notificações, webhooks e finalização: nenhum efeito colateral dentro da transação
   ou da requisição, e nada se perde se o Redis falhar.
 - **API na mesma origem** (`/api/v1` via proxy/rewrite): cookies first-party e sem CORS para a aplicação web.
-  Integrações usam `api.<domínio>` com API key.
+  Domínio único `sign.adapterco.com.br`; integrações usam o mesmo host com API key.
 - **Sessão do signatário separada** da sessão de usuário (cookie e tabela próprios), limitada ao processo.
 - **Finalização no worker**: `COMPLETED` só depois de persistidos o documento final e o relatório. Chaves de
   storage únicas por tentativa, então retentativas nunca substituem arquivos.

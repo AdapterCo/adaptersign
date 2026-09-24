@@ -1,6 +1,6 @@
 # API REST e webhooks
 
-- Base: `https://api.<domínio>/api/v1` (ou `https://app.<domínio>/api/v1` na mesma origem da aplicação web).
+- Base: `https://sign.adapterco.com.br/api/v1` (mesma origem da aplicação web).
 - OpenAPI/Swagger: `/api/docs`, JSON em `/api/docs/openapi.json` (desative com `SWAGGER_ENABLED=false`).
 - Autenticação de integrações: `Authorization: Bearer <api key>`. Chaves são criadas em
   Configurações → API keys e exibidas **uma única vez**. O plano precisa incluir acesso à API.
@@ -61,12 +61,12 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 Exemplo de criação e envio:
 
 ```bash
-curl -X POST https://api.exemplo.com.br/api/v1/envelopes \
+curl -X POST https://sign.adapterco.com.br/api/v1/envelopes \
   -H "Authorization: Bearer $API_KEY" -H "Idempotency-Key: pedido-123" -H "Content-Type: application/json" \
   -d '{"title":"Contrato 123","documents":[{"documentId":"<uuid>"}],
        "signers":[{"name":"Maria Exemplo","email":"maria@exemplo.com","authMethod":"EMAIL_OTP"}]}'
 
-curl -X POST https://api.exemplo.com.br/api/v1/envelopes/<id>/activate \
+curl -X POST https://sign.adapterco.com.br/api/v1/envelopes/<id>/activate \
   -H "Authorization: Bearer $API_KEY" -H "Idempotency-Key: ativar-123" -H "Content-Type: application/json" \
   -d '{"confirm":true}'
 ```

@@ -8,8 +8,8 @@ Monólito modular (NestJS) com dois processos a partir da mesma imagem:
 - **worker** (`dist/worker.js`) — BullMQ: outbox, e-mail, webhooks, finalização, manutenção.
 
 ```text
-Navegador ──HTTPS──► Nginx ──► web (Next.js)      app.dominio.com
-                         └──► api (NestJS) ◄──────  app.dominio.com/api  e  api.dominio.com
+Navegador ──HTTPS──► Traefik ─► web (Next.js)     sign.adapterco.com.br
+                         └──► api (NestJS) ◄──────  sign.adapterco.com.br/api
                                    │
              ┌─────────────────────┼──────────────────────┐
          PostgreSQL              Redis                S3-compatible
@@ -19,7 +19,7 @@ Navegador ──HTTPS──► Nginx ──► web (Next.js)      app.dominio.co
 ```
 
 A aplicação web chama a API na **mesma origem** (`/api/v1`), então os cookies HttpOnly são first-party.
-Integrações usam `api.dominio.com` com API key.
+Integrações usam o mesmo host (`https://sign.adapterco.com.br/api/v1`) com API key.
 
 ## Módulos (`apps/api/src/modules`)
 

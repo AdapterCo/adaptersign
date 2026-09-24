@@ -3,7 +3,7 @@
 ## Pré-requisitos
 
 - VPS Linux com Docker Engine e o plugin Compose v2 (`docker compose version`).
-- Nginx (ou Traefik) com TLS (ex.: certbot) e DNS de `app.<domínio>` e `api.<domínio>` apontando para a VPS.
+- Reverse proxy com TLS (Traefik do Easypanel, ou Nginx) e registro DNS `sign.adapterco.com.br` (A/AAAA) apontando para a VPS.
 - Bucket S3-compatible **privado**: Cloudflare R2 ou Amazon S3 (recomendados em produção) ou MinIO.
 - Servidor SMTP: Amazon SES, Resend (SMTP) ou equivalente, com SPF/DKIM configurados no domínio remetente.
 
@@ -41,7 +41,7 @@ Edite o `.env`. Nenhum valor de exemplo é aceito em produção; a API recusa in
 | `JWT_ACCESS_SECRET`, `TOKEN_HASH_SECRET` | `openssl rand -hex 48` (valores diferentes) |
 | `ENCRYPTION_KEY` | `openssl rand -base64 32`. **Guarde com segurança**: sem ela, CPFs e segredos de webhook ficam ilegíveis |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | senhas fortes; repita-as em `DATABASE_URL` e `REDIS_URL` |
-| `APP_PUBLIC_URL`, `API_PUBLIC_URL` | `https://app.<domínio>` / `https://api.<domínio>` |
+| `APP_PUBLIC_URL`, `API_PUBLIC_URL` | ambos `https://sign.adapterco.com.br` (domínio único) |
 | `STORAGE_*` | credenciais do bucket privado (veja "Storage") |
 | `SMTP_*`, `EMAIL_FROM` | credenciais do provedor SMTP |
 | `TRUST_PROXY_HOPS` | `1` atrás do Nginx |
@@ -87,9 +87,13 @@ Regras necessárias, com HTTPS:
 
 | Domínio / caminho | Destino |
 | --- | --- |
-| `app.<domínio>/api/*` | `api:4000` |
-| `app.<domínio>/*` | `web:3000` |
-| `api.<domínio>/*` | `api:4000` |
+| `sign.adapterco.com.br/api/*` | `api:4000` |
+| `sign.adapterco.com.br/health`, `/ready` (opcional, monitoramento) | `api:4000` |
+| `sign.adapterco.com.br/*` | `web:3000` |
+
+URLs resultantes: aplicação `https://sign.adapterco.com.br`, assinatura `https://sign.adapterco.com.br/sign/{token}`,
+validação pública `https://sign.adapterco.com.br/verify`, API `https://sign.adapterco.com.br/api/v1` e
+documentação OpenAPI `https://sign.adapterco.com.br/api/docs`.
 
 Mantenha `TRUST_PROXY_HOPS=1` (um proxy à frente da API). Encaminhe `/api` do domínio do app **diretamente** à API
 (e não via Next.js), para que o IP do cliente registrado nas evidências seja o correto.
@@ -97,9 +101,8 @@ Mantenha `TRUST_PROXY_HOPS=1` (um proxy à frente da API). Encaminhe `/api` do d
 **Servidor com Easypanel/Traefik** (Traefik já ocupa 80/443; não instale Nginx nessas portas). Duas opções:
 
 1. **Recomendado:** crie no Easypanel um serviço do tipo *Compose* apontando para este repositório. Defina as
-   variáveis do `.env` na aba de ambiente e configure os domínios na aba *Domains*: `app.<domínio>` → serviço
-   `web` porta 3000, `app.<domínio>` com caminho `/api` → serviço `api` porta 4000, e `api.<domínio>` → `api`
-   porta 4000. O Easypanel cuida do TLS.
+   variáveis do `.env` na aba de ambiente e configure na aba *Domains*: `sign.adapterco.com.br` → serviço `web`
+   porta 3000, e `sign.adapterco.com.br` com caminho `/api` → serviço `api` porta 4000. O Easypanel cuida do TLS.
 2. Subir com `docker compose` fora do Easypanel exige conectar `web` e `api` à rede do Traefik e registrar as rotas
    no provider que esse Traefik usa. Confirme a configuração do seu Traefik antes; esta opção não foi testada.
 
