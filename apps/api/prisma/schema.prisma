@@ -536,6 +536,8 @@ model SignerAccessToken {
   id         String    @id @default(uuid(7)) @db.Uuid
   signerId   String    @map("signer_id") @db.Uuid
   tokenHash  String    @unique @map("token_hash")
+  // Canal por onde o link foi entregue: EMAIL | WHATSAPP | API (entregue pelo sistema de origem).
+  channel    String    @default("EMAIL")
   expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
   revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
   lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
@@ -555,6 +557,8 @@ model SignatureSession {
   tokenHash       String      @unique @map("token_hash")
   authenticatedAt DateTime?   @map("authenticated_at") @db.Timestamptz(3)
   authMethod      AuthMethod? @map("auth_method")
+  // Canal do link que abriu a sessão — o código (OTP) vai, por padrão, pelo mesmo canal.
+  linkChannel     String?     @map("link_channel")
   ip              String?
   userAgent       String?     @map("user_agent")
   expiresAt       DateTime    @map("expires_at") @db.Timestamptz(3)

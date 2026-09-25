@@ -8,6 +8,7 @@ import { EncryptionService } from '../../common/crypto/encryption.service';
 import { randomToken } from '../../common/crypto/crypto.util';
 import { Errors } from '../../common/errors/app-error';
 import { maskEmail } from '../../common/util/mask';
+import { maskPhone } from '../../common/util/phone';
 import { cleanText } from '../../common/util/text';
 import type { ClientInfo } from '../../common/http/client-info';
 import { AuditService } from '../audit/audit.service';
@@ -18,7 +19,7 @@ import { LegalService } from '../legal/legal.service';
 import { EnvelopeLifecycleService } from '../envelopes/envelope-lifecycle.service';
 import { EnvelopesService } from '../envelopes/envelopes.service';
 import { isSignersTurn, SIGNABLE_ENVELOPE_STATUSES, signerSourcesFor } from '../envelopes/envelope-state';
-import { authMethodLabel, requiresChallenge } from './auth-methods';
+import { authMethodLabel, defaultOtpChannel, isWhatsAppEnabled, otpChannels, requiresChallenge } from './auth-methods';
 import { SignatureEngine } from './signature-engine';
 
 export interface ResolvedSession {
@@ -77,6 +78,7 @@ export class SigningService {
           ip: client.ip,
           userAgent: client.userAgent,
           expiresAt: new Date(now.getTime() + ttlMs),
+          linkChannel: access.channel,
           ...(autoAuth ? { authenticatedAt: now, authMethod: AuthMethod.EMAIL } : {}),
         },
       });
@@ -171,6 +173,17 @@ export class SigningService {
         authMethodLabel: authMethodLabel(signer.authMethod),
         authenticated: !!session.authenticatedAt,
         requiresOtp: requiresChallenge(signer.authMethod),
+        // Canais para o código; o padrão segue o canal do link aberto.
+        otp: requiresChallenge(signer.authMethod)
+          ? (() => {
+              const channels = otpChannels(signer, isWhatsAppEnabled());
+              return {
+                channels,
+                defaultChannel: defaultOtpChannel(channels, session.linkChannel),
+                destinations: { EMAIL: maskEmail(signer.email), WHATSAPP: maskPhone(signer.phone) },
+              };
+            })()
+          : null,
         canSign:
           !!session.authenticatedAt &&
           signer.status === SignerStatus.AUTHENTICATED &&

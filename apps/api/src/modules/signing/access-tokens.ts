@@ -13,12 +13,13 @@ export async function issueSignerAccessToken(
   signerId: string,
   envelopeExpiresAt: Date | null,
   ttlDays: number,
+  channel: 'EMAIL' | 'WHATSAPP' | 'API' = 'EMAIL',
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = randomToken(32);
   const maxExpiry = Date.now() + ttlDays * 24 * 3600 * 1000;
   const expiresAt = new Date(envelopeExpiresAt ? Math.min(envelopeExpiresAt.getTime(), maxExpiry) : maxExpiry);
   await tx.signerAccessToken.create({
-    data: { signerId, tokenHash: encryption.hashToken(token, 'signer_access'), expiresAt },
+    data: { signerId, tokenHash: encryption.hashToken(token, 'signer_access'), expiresAt, channel },
   });
   return { token, expiresAt };
 }

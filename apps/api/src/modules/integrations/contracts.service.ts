@@ -219,7 +219,7 @@ export class ContractsService {
   }
 
   private async issueLinkTx(tx: Tx, auth: AuthContext, envelopeId: string, envelopeExpiresAt: Date | null, signerId: string, client: ClientInfo) {
-    const issued = await issueSignerAccessToken(tx, this.encryption, signerId, envelopeExpiresAt, this.config.SIGNER_LINK_TTL_DAYS);
+    const issued = await issueSignerAccessToken(tx, this.encryption, signerId, envelopeExpiresAt, this.config.SIGNER_LINK_TTL_DAYS, 'API');
     await this.audit.record(tx, {
       eventType: AuditEventType.SIGNING_LINK_ISSUED,
       actor: actorOf(auth),

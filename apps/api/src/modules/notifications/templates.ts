@@ -64,6 +64,43 @@ export interface UserLinkCtx {
   organizationName?: string;
 }
 
+/**
+ * Mensagens de WhatsApp (texto puro; *negrito* no formato do WhatsApp). Enviadas pelo número
+ * central da plataforma — por isso sempre identificam a empresa remetente.
+ */
+export const WhatsAppTemplates = {
+  signer_invite(brand: Branding, c: SignerInviteCtx): string {
+    return [
+      c.reminder ? `*Lembrete — ${brand.name}*` : `*${brand.name}*`,
+      '',
+      `Olá, ${c.signerName}!`,
+      `${c.senderOrg} enviou o documento *${c.envelopeTitle}* para você assinar eletronicamente.`,
+      ...(c.message ? ['', c.message] : []),
+      '',
+      `Para ler e assinar, acesse: ${c.link}`,
+      ...(c.expiresAt ? ['', `Prazo: ${fmtDate(c.expiresAt)} (horário de Brasília).`] : []),
+      '',
+      'Este link é pessoal. Se você não reconhece este envio, ignore esta mensagem.',
+    ].join('\n');
+  },
+  signer_otp(brand: Branding, c: OtpCtx): string {
+    return [
+      `*${c.code}* é o seu código de verificação ${brand.name} para assinar *${c.envelopeTitle}*.`,
+      '',
+      `Válido por ${c.minutes} minutos. Não compartilhe este código com ninguém.`,
+    ].join('\n');
+  },
+  envelope_completed(brand: Branding, c: EnvelopeStatusCtx): string {
+    return [
+      `*${brand.name}*`,
+      '',
+      `Olá, ${c.recipientName}! O documento *${c.envelopeTitle}* foi assinado por todos.`,
+      `Código de validação: ${c.validationCode}`,
+      ...(c.link ? ['', `Baixe a sua via assinada: ${c.link}`] : []),
+    ].join('\n');
+  },
+};
+
 const fmtDate = (d: Date) => d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
 
 export const EmailTemplates = {

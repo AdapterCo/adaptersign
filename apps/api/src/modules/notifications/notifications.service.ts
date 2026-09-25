@@ -6,7 +6,9 @@ import type { EmailTemplateName } from './templates';
 
 export interface CreateNotificationInput {
   template: EmailTemplateName;
+  /** E-mail, ou telefone E.164 quando channel = WHATSAPP. */
   recipient: string;
+  channel?: 'EMAIL' | 'WHATSAPP';
   /** Chave lógica que impede envio duplicado (ex.: convite por signatário). */
   dedupeKey: string;
   organizationId: string | null;
@@ -32,7 +34,7 @@ export class NotificationsService {
     const rows = await client.$queryRaw<Array<{ id: string }>>`
       INSERT INTO "notifications" ("id", "organization_id", "envelope_id", "signer_id", "channel", "template", "recipient", "data", "dedupe_key", "status", "attempts", "created_at")
       VALUES (gen_random_uuid(), ${input.organizationId}::uuid, ${input.envelopeId ?? null}::uuid, ${input.signerId ?? null}::uuid,
-              'EMAIL', ${input.template}, ${input.recipient}, ${data}::jsonb, ${input.dedupeKey}, 'PENDING', 0, now())
+              ${input.channel ?? 'EMAIL'}, ${input.template}, ${input.recipient}, ${data}::jsonb, ${input.dedupeKey}, 'PENDING', 0, now())
       ON CONFLICT ("dedupe_key") DO NOTHING
       RETURNING "id"`;
     return rows[0]?.id ?? null;

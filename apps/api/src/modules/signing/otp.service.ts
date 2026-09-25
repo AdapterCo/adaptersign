@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { WHATSAPP_PROVIDER, type WhatsAppProvider } from '../../infra/whatsapp/whatsapp.provider';
 import { randomUUID } from 'node:crypto';
 import { ActorType, AuthMethod, SignerStatus, type Signer } from '../../generated/prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -7,6 +8,7 @@ import { EncryptionService } from '../../common/crypto/encryption.service';
 import { randomNumericCode, safeEqual } from '../../common/crypto/crypto.util';
 import { AppError, Errors } from '../../common/errors/app-error';
 import { maskEmail } from '../../common/util/mask';
+import { maskPhone } from '../../common/util/phone';
 import type { ClientInfo } from '../../common/http/client-info';
 import { RateLimitService } from '../../common/rate-limit/rate-limit';
 import { AuditService } from '../audit/audit.service';
@@ -15,6 +17,7 @@ import { OutboxService } from '../outbox/outbox.service';
 import { DomainEvent } from '../outbox/domain-events';
 import { NotificationsService } from '../notifications/notifications.service';
 import { signerSourcesFor } from '../envelopes/envelope-state';
+import { defaultOtpChannel, otpChannels, requiresChallenge, type OtpChannel } from './auth-methods';
 
 const OTP_LENGTH = 6;
 
@@ -23,10 +26,11 @@ export interface SessionRef {
   signerId: string;
   envelopeId: string;
   authenticatedAt: Date | null;
+  linkChannel?: string | null;
 }
 
 /**
- * OTP por e-mail: código de CSPRNG, somente HMAC persistido, validade curta,
+ * OTP por e-mail ou WhatsApp (mesmo canal do link, por padrão): código de CSPRNG, somente HMAC persistido, validade curta,
  * limite de tentativas, cooldown, rate limiting e uso único. Nunca registrado em logs.
  */
 @Injectable()
@@ -39,15 +43,21 @@ export class OtpService {
     private readonly notifications: NotificationsService,
     private readonly limiter: RateLimitService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
   private hashCode(challengeId: string, code: string): string {
     return this.encryption.hashToken(code, `otp:${challengeId}`);
   }
 
-  async request(session: SessionRef, signer: Signer, client: ClientInfo) {
-    if (signer.authMethod !== AuthMethod.EMAIL_OTP) throw Errors.unprocessable('OTP_NOT_REQUIRED', 'Este signatário não utiliza OTP.');
+  async request(session: SessionRef, signer: Signer, client: ClientInfo, requested?: OtpChannel) {
+    if (!requiresChallenge(signer.authMethod)) throw Errors.unprocessable('OTP_NOT_REQUIRED', 'Este signatário não utiliza OTP.');
     if (session.authenticatedAt) throw Errors.conflict('ALREADY_AUTHENTICATED', 'Sessão já autenticada.');
+    const channels = otpChannels(signer, this.whatsapp.enabled);
+    if (requested && !channels.includes(requested)) throw Errors.validation('Canal de envio do código indisponível para este signatário.');
+    const channel = requested ?? defaultOtpChannel(channels, session.linkChannel);
+    if (!channel) throw Errors.unprocessable('AUTH_METHOD_UNAVAILABLE', 'Envio do código por WhatsApp indisponível no momento.');
+    const method = channel === 'WHATSAPP' ? AuthMethod.WHATSAPP_OTP : AuthMethod.EMAIL_OTP;
     await this.limiter.consume('otp_request_signer', signer.id);
 
     const last = await this.prisma.authenticationChallenge.findFirst({
@@ -64,7 +74,7 @@ export class OtpService {
     const code = randomNumericCode(OTP_LENGTH);
     const challengeId = randomUUID();
     const expiresAt = new Date(Date.now() + this.config.OTP_TTL_SECONDS * 1000);
-    const destinationMasked = maskEmail(signer.email);
+    const destinationMasked = channel === 'WHATSAPP' ? (maskPhone(signer.phone) ?? '') : maskEmail(signer.email);
 
     const notificationId = await this.prisma.tx(async (tx) => {
       // Invalida desafios anteriores ainda ativos (apenas o último código vale).
@@ -77,7 +87,7 @@ export class OtpService {
           id: challengeId,
           signerId: signer.id,
           signatureSessionId: session.id,
-          method: AuthMethod.EMAIL_OTP,
+          method,
           codeHash: this.hashCode(challengeId, code),
           destinationMasked,
           maxAttempts: this.config.OTP_MAX_ATTEMPTS,
@@ -91,11 +101,12 @@ export class OtpService {
         envelopeId: signer.envelopeId,
         signerId: signer.id,
         ...client,
-        metadata: { challengeId, method: AuthMethod.EMAIL_OTP, destination: destinationMasked, expiresAt },
+        metadata: { challengeId, method, channel, destination: destinationMasked, expiresAt },
       });
       return this.notifications.create(tx, {
         template: 'signer_otp',
-        recipient: signer.email,
+        channel,
+        recipient: channel === 'WHATSAPP' ? signer.phone! : signer.email,
         dedupeKey: `otp:${challengeId}`,
         organizationId: signer.organizationId,
         envelopeId: signer.envelopeId,
@@ -105,7 +116,7 @@ export class OtpService {
     });
     // O código segue para o worker apenas cifrado (AES-GCM) no payload do job.
     if (notificationId) await this.notifications.dispatch(notificationId, this.encryption.encrypt(code));
-    return { destination: destinationMasked, expiresAt, resendAvailableAt: new Date(Date.now() + cooldownMs) };
+    return { destination: destinationMasked, channel, expiresAt, resendAvailableAt: new Date(Date.now() + cooldownMs) };
   }
 
   async verify(session: SessionRef, signer: Signer, code: string, client: ClientInfo): Promise<void> {
@@ -144,7 +155,7 @@ export class OtpService {
       const now = new Date();
       const consumed = await tx.authenticationChallenge.updateMany({ where: { id: ch.id, consumedAt: null }, data: { consumedAt: now } });
       if (consumed.count === 0) return { ok: false as const, reason: 'NO_CHALLENGE' as const };
-      await tx.signatureSession.update({ where: { id: session.id }, data: { authenticatedAt: now, authMethod: AuthMethod.EMAIL_OTP } });
+      await tx.signatureSession.update({ where: { id: session.id }, data: { authenticatedAt: now, authMethod: ch.method } });
       await tx.signer.updateMany({
         where: { id: signer.id, status: { in: signerSourcesFor(SignerStatus.AUTHENTICATED) } },
         data: { status: SignerStatus.AUTHENTICATED, authenticatedAt: now },
@@ -154,7 +165,7 @@ export class OtpService {
         ...base,
         eventType: AuditEventType.SIGNER_AUTHENTICATED,
         occurredAt: now,
-        metadata: { method: AuthMethod.EMAIL_OTP, challengeId: ch.id, sessionId: session.id },
+        metadata: { method: ch.method, challengeId: ch.id, sessionId: session.id },
       });
       const ev = await this.outbox.emit(tx, {
         type: DomainEvent.SIGNER_AUTHENTICATED,

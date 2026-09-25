@@ -62,6 +62,15 @@ const envSchema = z
     SMTP_PASSWORD: z.string().optional(),
     EMAIL_FROM: z.string().min(3),
 
+    // WhatsApp (número central da plataforma). "none" = desabilitado (convites/códigos só por e-mail).
+    WHATSAPP_PROVIDER: z.enum(['none', 'evolution']).default('none'),
+    EVOLUTION_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url().optional()),
+    EVOLUTION_API_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).optional()),
+    EVOLUTION_INSTANCE: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
+    WHATSAPP_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    // DDI usado quando o telefone é informado sem código do país (ex.: "24 99999-9999").
+    PHONE_DEFAULT_COUNTRY_CODE: z.string().regex(/^[1-9][0-9]{0,2}$/).default('55'),
+
     OTP_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
@@ -90,6 +99,11 @@ const envSchema = z
       .default('ADP'),
   })
   .superRefine((env, ctx) => {
+    if (env.WHATSAPP_PROVIDER === 'evolution') {
+      for (const key of ['EVOLUTION_API_URL', 'EVOLUTION_API_KEY', 'EVOLUTION_INSTANCE'] as const) {
+        if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: `${key} é obrigatório com WHATSAPP_PROVIDER=evolution` });
+      }
+    }
     if (env.NODE_ENV === 'production') {
       if (!env.COOKIE_SECURE) {
         ctx.addIssue({ code: 'custom', path: ['COOKIE_SECURE'], message: 'COOKIE_SECURE deve ser true em produção' });

@@ -17,6 +17,7 @@ import { EncryptionService } from '../../common/crypto/encryption.service';
 import { Errors } from '../../common/errors/app-error';
 import { maskCpf, maskEmail } from '../../common/util/mask';
 import { cleanText, normalizeCpf, normalizeEmail } from '../../common/util/text';
+import { normalizePhone } from '../../common/util/phone';
 import { generateValidationCode } from '../../common/util/validation-code';
 import { paginated, resolvePagination } from '../../common/util/pagination';
 import type { ClientInfo } from '../../common/http/client-info';
@@ -344,6 +345,12 @@ export class EnvelopesService {
     const count = await tx.signer.count({ where: { envelopeId } });
     if (count >= MAX_SIGNERS) throw Errors.unprocessable('TOO_MANY_SIGNERS', `Máximo de ${MAX_SIGNERS} signatários por envelope.`);
     const email = normalizeEmail(input.email);
+    let phone: string | null = null;
+    if (input.phone) {
+      phone = normalizePhone(input.phone, this.config.PHONE_DEFAULT_COUNTRY_CODE);
+      if (!phone) throw Errors.validation('Telefone inválido. Informe DDD e número (ex.: 24 99999-9999).');
+    }
+    if (authMethod === AuthMethod.WHATSAPP_OTP && !phone) throw Errors.validation('Informe o telefone (WhatsApp) do signatário.');
     let cpfEncrypted: string | null = null;
     let cpfLast2: string | null = null;
     if (input.cpf) {
@@ -368,7 +375,7 @@ export class EnvelopesService {
         envelopeId,
         name: cleanText(input.name, 120),
         email,
-        phone: input.phone ?? null,
+        phone,
         cpfEncrypted,
         cpfLast2,
         role: input.role ?? SignerRole.SIGNER,

@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { SignerStatus, type OutboxEvent } from '../../generated/prisma/client';
+import { Inject, Injectable } from '@nestjs/common';
+import { AuthMethod, SignerStatus, type OutboxEvent } from '../../generated/prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { WHATSAPP_PROVIDER, type WhatsAppProvider } from '../../infra/whatsapp/whatsapp.provider';
 import { DomainEvent, type InviteRequestedPayload } from '../outbox/domain-events';
 import { NotificationsService, type CreateNotificationInput } from './notifications.service';
 
@@ -10,7 +11,13 @@ export class NotificationDispatcherService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
+
+  /** Signatário também recebe por WhatsApp (número central) quando há telefone e o canal está ativo. */
+  private viaWhatsApp(s: { phone: string | null; authMethod: AuthMethod }): s is { phone: string; authMethod: AuthMethod } {
+    return this.whatsapp.enabled && !!s.phone && s.authMethod !== AuthMethod.INTEGRATION;
+  }
 
   async handle(event: OutboxEvent): Promise<void> {
     const payload = event.payload as Record<string, unknown>;
@@ -21,11 +28,12 @@ export class NotificationDispatcherService {
         const p = payload as unknown as InviteRequestedPayload;
         const signers = await this.prisma.signer.findMany({
           where: { id: { in: p.signerIds }, envelopeId: p.envelopeId },
-          select: { id: true, email: true, organizationId: true },
+          select: { id: true, email: true, phone: true, authMethod: true, organizationId: true },
         });
         for (const s of signers) {
+          const template = p.kind === 'reminder' ? 'signer_reminder' : 'signer_invite';
           inputs.push({
-            template: p.kind === 'reminder' ? 'signer_reminder' : 'signer_invite',
+            template,
             recipient: s.email,
             dedupeKey: p.kind === 'reminder' ? `reminder:${s.id}:${event.id}` : `invite:${s.id}`,
             organizationId: s.organizationId,
@@ -33,6 +41,18 @@ export class NotificationDispatcherService {
             signerId: s.id,
             data: { signerId: s.id },
           });
+          if (this.viaWhatsApp(s)) {
+            inputs.push({
+              template,
+              channel: 'WHATSAPP',
+              recipient: s.phone,
+              dedupeKey: p.kind === 'reminder' ? `wa-reminder:${s.id}:${event.id}` : `wa-invite:${s.id}`,
+              organizationId: s.organizationId,
+              envelopeId: p.envelopeId,
+              signerId: s.id,
+              data: { signerId: s.id },
+            });
+          }
         }
         break;
       }
@@ -42,7 +62,7 @@ export class NotificationDispatcherService {
         const envelopeId = String(payload.envelopeId);
         const env = await this.prisma.envelope.findUnique({
           where: { id: envelopeId },
-          include: { signers: { select: { id: true, email: true, status: true, invitedAt: true } } },
+          include: { signers: { select: { id: true, email: true, phone: true, authMethod: true, status: true, invitedAt: true } } },
         });
         if (!env) break;
         const kind = event.type === DomainEvent.ENVELOPE_COMPLETED ? 'completed' : event.type === DomainEvent.ENVELOPE_CANCELLED ? 'cancelled' : 'expired';
@@ -58,6 +78,18 @@ export class NotificationDispatcherService {
             signerId: s.id,
             data: { signerId: s.id },
           });
+          if (kind === 'completed' && this.viaWhatsApp(s)) {
+            inputs.push({
+              template: 'envelope_completed_signer',
+              channel: 'WHATSAPP',
+              recipient: s.phone,
+              dedupeKey: `wa-completed:${envelopeId}:${s.id}`,
+              organizationId: env.organizationId,
+              envelopeId,
+              signerId: s.id,
+              data: { signerId: s.id },
+            });
+          }
         }
         // O remetente é avisado (exceto do cancelamento que ele próprio fez).
         if (env.createdById && kind !== 'cancelled') {

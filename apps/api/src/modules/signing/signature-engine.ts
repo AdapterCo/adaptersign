@@ -30,7 +30,7 @@ import {
   signersToInvite,
   SIGNABLE_ENVELOPE_STATUSES,
 } from '../envelopes/envelope-state';
-import { requiresChallenge } from './auth-methods';
+import { requiresChallenge, sessionSatisfies } from './auth-methods';
 
 export interface SignInput {
   consentAccepted: boolean;
@@ -195,9 +195,11 @@ export class SignatureEngine {
     if (!session.authenticatedAt || signer.status !== SignerStatus.AUTHENTICATED) {
       throw Errors.unprocessable('AUTHENTICATION_REQUIRED', 'Autenticação necessária antes de assinar.');
     }
-    if (requiresChallenge(signer.authMethod) && session.authMethod !== signer.authMethod) {
+    if (requiresChallenge(signer.authMethod) && !sessionSatisfies(signer.authMethod, session.authMethod)) {
       throw Errors.unprocessable('AUTHENTICATION_REQUIRED', 'Autenticação necessária antes de assinar.');
     }
+
+    const usedMethod = session.authMethod ?? signer.authMethod;
 
     // 5. Documentos (hash do original travado no envelope).
     const docs = await tx.envelopeDocument.findMany({
@@ -251,7 +253,8 @@ export class SignatureEngine {
       envelope_id: envelope.id,
       documents: documentHashes.map((d) => ({ document_id: d.documentId, version_id: d.versionId, sha256: d.sha256 })),
       timestamp: now.toISOString(),
-      authentication: { method: signer.authMethod, authenticated_at: session.authenticatedAt.toISOString(), session_id: session.id },
+      // Método efetivamente usado na sessão (ex.: código por WhatsApp em vez de e-mail).
+      authentication: { method: usedMethod, authenticated_at: session.authenticatedAt.toISOString(), session_id: session.id },
       network: { ip: ctx.client.ip, user_agent: ctx.client.userAgent },
       consent: { accepted: true, terms_version: consentText.version, terms_sha256: consentText.sha256, consent_id: consent.id },
       signature: { method: input.method, asset_sha256: assetSha256 },
@@ -268,7 +271,7 @@ export class SignatureEngine {
         typedName,
         assetStorageKey: assetKey,
         assetSha256,
-        authMethod: signer.authMethod,
+        authMethod: usedMethod,
         evidence: evidence as Prisma.InputJsonObject,
         ip: ctx.client.ip,
         userAgent: ctx.client.userAgent,
@@ -285,7 +288,7 @@ export class SignatureEngine {
       ...base,
       eventType: AuditEventType.SIGNATURE_COMPLETED,
       occurredAt: now,
-      metadata: { signatureId: signature.id, method: input.method, assetSha256, authMethod: signer.authMethod, consentId: consent.id },
+      metadata: { signatureId: signature.id, method: input.method, assetSha256, authMethod: usedMethod, consentId: consent.id },
     });
 
     const events: EmittedEvent[] = [

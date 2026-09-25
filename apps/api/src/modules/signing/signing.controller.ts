@@ -21,6 +21,13 @@ class OpenSessionDto {
   token: string;
 }
 
+class RequestOtpDto {
+  @ApiPropertyOptional({ enum: ['EMAIL', 'WHATSAPP'], description: 'Canal do código (padrão: o mesmo do link)' })
+  @IsOptional()
+  @IsIn(['EMAIL', 'WHATSAPP'])
+  channel?: 'EMAIL' | 'WHATSAPP';
+}
+
 class VerifyOtpDto {
   @ApiProperty({ example: '123456' })
   @IsString()
@@ -113,9 +120,9 @@ export class SigningController {
   @RateLimit('otp_request_ip')
   @HttpCode(202)
   @Post('otp/request')
-  async requestOtp(@Req() req: CookieRequest) {
+  async requestOtp(@Body() dto: RequestOtpDto, @Req() req: CookieRequest) {
     const r = await this.signing.resolve(this.cookie(req));
-    return this.otp.request(r.session, r.signer, clientInfo(req));
+    return this.otp.request(r.session, r.signer, clientInfo(req), dto.channel);
   }
 
   @RateLimit('otp_verify')

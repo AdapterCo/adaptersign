@@ -2,28 +2,36 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ActorType, SignerStatus, UserTokenPurpose } from '../../generated/prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { EMAIL_PROVIDER, type EmailProvider } from '../../infra/email/email.provider';
+import { WHATSAPP_PROVIDER, WhatsAppSendError, type WhatsAppProvider } from '../../infra/whatsapp/whatsapp.provider';
 import { APP_CONFIG, type AppConfig } from '../../config/config';
 import { BRANDING } from '../../config/config.module';
 import type { Branding } from '../../config/branding';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 import { maskEmail } from '../../common/util/mask';
+import { maskPhone } from '../../common/util/phone';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../audit/audit-events';
 import { issueUserToken } from '../auth/user-tokens';
 import { issueSignerAccessToken } from '../signing/access-tokens';
 import { SIGNABLE_ENVELOPE_STATUSES, TERMINAL_SIGNER_STATUSES, signerSourcesFor } from '../envelopes/envelope-state';
-import { EmailTemplates, type RenderedEmail } from './templates';
+import { EmailTemplates, WhatsAppTemplates, type RenderedEmail } from './templates';
 
 type Data = Record<string, unknown>;
+type Channel = 'EMAIL' | 'WHATSAPP';
 
 interface Prepared {
   email: RenderedEmail | null;
+  /** Mensagem de WhatsApp (canal WHATSAPP). */
+  text?: string | null;
   skipReason?: string;
   onSent?: () => Promise<void>;
   onFailed?: () => Promise<void>;
 }
 
-/** Worker: renderiza e envia notificações. Tokens de link são gerados no momento do envio. */
+/**
+ * Worker: renderiza e envia notificações por e-mail ou WhatsApp (número central).
+ * Tokens de link são gerados no momento do envio, marcados com o canal de entrega.
+ */
 @Injectable()
 export class EmailSenderService {
   private readonly logger = new Logger('EmailSender');
@@ -33,6 +41,7 @@ export class EmailSenderService {
     private readonly encryption: EncryptionService,
     private readonly audit: AuditService,
     @Inject(EMAIL_PROVIDER) private readonly provider: EmailProvider,
+    @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(BRANDING) private readonly brand: Branding,
   ) {}
@@ -41,33 +50,37 @@ export class EmailSenderService {
     const n = await this.prisma.notification.findUnique({ where: { id: notificationId } });
     if (!n || n.status === 'SENT') return;
     const data = (n.data ?? {}) as Data;
+    const channel: Channel = n.channel === 'WHATSAPP' ? 'WHATSAPP' : 'EMAIL';
+    const to = channel === 'WHATSAPP' ? maskPhone(n.recipient) : maskEmail(n.recipient);
 
-    const prepared = await this.prepare(n.template, n.recipient, data, encryptedSecret, n.id);
-    if (!prepared.email) {
+    const prepared = await this.prepare(n.template, n.recipient, data, encryptedSecret, n.id, channel);
+    const ready = channel === 'WHATSAPP' ? !!prepared.text : !!prepared.email;
+    if (!ready) {
       await this.prisma.notification.update({ where: { id: n.id }, data: { status: 'FAILED', lastError: `skipped: ${prepared.skipReason ?? 'n/a'}` } });
       return;
     }
     try {
-      const result = await this.provider.send({
-        to: n.recipient,
-        ...prepared.email,
-        headers: { 'X-Adapter-Notification-ID': n.id },
-      });
+      const result =
+        channel === 'WHATSAPP'
+          ? await this.whatsapp.sendText(n.recipient, prepared.text!)
+          : await this.provider.send({ to: n.recipient, ...prepared.email!, headers: { 'X-Adapter-Notification-ID': n.id } });
       await this.prisma.notification.update({
         where: { id: n.id },
         data: { status: 'SENT', sentAt: new Date(), attempts: { increment: 1 }, providerMessageId: result.messageId, lastError: null },
       });
       if (prepared.onSent) await prepared.onSent();
-      this.logger.log({ event: 'email_sent', notification_id: n.id, template: n.template, to: maskEmail(n.recipient) });
+      this.logger.log({ event: 'notification_sent', channel, notification_id: n.id, template: n.template, to });
     } catch (err) {
+      // Erro definitivo (ex.: número sem WhatsApp): não adianta repetir.
+      const permanent = err instanceof WhatsAppSendError && err.permanent;
       const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
       await this.prisma.notification.update({
         where: { id: n.id },
-        data: { attempts: { increment: 1 }, lastError: message, ...(isFinalAttempt ? { status: 'FAILED' } : {}) },
+        data: { attempts: { increment: 1 }, lastError: message, ...(isFinalAttempt || permanent ? { status: 'FAILED' } : {}) },
       });
       if (prepared.onFailed) await prepared.onFailed();
-      this.logger.warn({ event: 'email_failed', notification_id: n.id, template: n.template, error: message });
-      throw err;
+      this.logger.warn({ event: 'notification_failed', channel, notification_id: n.id, template: n.template, permanent, error: message });
+      if (!permanent) throw err;
     }
   }
 
@@ -75,15 +88,22 @@ export class EmailSenderService {
     return `${this.brand.appUrl}${path}`;
   }
 
-  private async prepare(template: string, recipient: string, data: Data, secret: string | undefined, notificationId: string): Promise<Prepared> {
+  private async prepare(
+    template: string,
+    recipient: string,
+    data: Data,
+    secret: string | undefined,
+    notificationId: string,
+    channel: Channel = 'EMAIL',
+  ): Promise<Prepared> {
     switch (template) {
       case 'signer_invite':
       case 'signer_reminder':
-        return this.prepareInvite(String(data.signerId), template === 'signer_reminder', notificationId);
+        return this.prepareInvite(String(data.signerId), template === 'signer_reminder', notificationId, channel);
       case 'signer_otp':
-        return this.prepareOtp(String(data.signerId), String(data.challengeId), secret);
+        return this.prepareOtp(String(data.signerId), String(data.challengeId), secret, channel);
       case 'envelope_completed_signer':
-        return this.prepareCompletedSigner(String(data.signerId));
+        return this.prepareCompletedSigner(String(data.signerId), channel);
       case 'envelope_completed_owner':
       case 'envelope_cancelled_owner':
       case 'envelope_expired_owner':
@@ -101,16 +121,19 @@ export class EmailSenderService {
     }
   }
 
-  private async prepareInvite(signerId: string, reminder: boolean, notificationId: string): Promise<Prepared> {
+  private async prepareInvite(signerId: string, reminder: boolean, notificationId: string, channel: Channel): Promise<Prepared> {
     const signer = await this.prisma.signer.findUnique({ where: { id: signerId }, include: { envelope: { include: { organization: { select: { name: true } } } } } });
     if (!signer) return { email: null, skipReason: 'signatário inexistente' };
     const env = signer.envelope;
     if (!SIGNABLE_ENVELOPE_STATUSES.includes(env.status) || env.finalizationRequestedAt || TERMINAL_SIGNER_STATUSES.includes(signer.status)) {
       return { email: null, skipReason: 'envelope/signatário não aguarda assinatura' };
     }
-    const issued = await this.prisma.tx((tx) => issueSignerAccessToken(tx, this.encryption, signer.id, env.expiresAt, this.config.SIGNER_LINK_TTL_DAYS));
+    if (channel === 'WHATSAPP' && !signer.phone) return { email: null, skipReason: 'signatário sem telefone' };
+    const issued = await this.prisma.tx((tx) =>
+      issueSignerAccessToken(tx, this.encryption, signer.id, env.expiresAt, this.config.SIGNER_LINK_TTL_DAYS, channel),
+    );
     const tokenHash = this.encryption.hashToken(issued.token, 'signer_access');
-    const email = EmailTemplates.signer_invite(this.brand, {
+    const ctx = {
       signerName: signer.name,
       senderOrg: env.organization.name,
       envelopeTitle: env.title,
@@ -118,9 +141,10 @@ export class EmailSenderService {
       link: this.link(`/sign/${issued.token}`),
       expiresAt: env.expiresAt,
       reminder,
-    });
+    };
     return {
-      email,
+      email: channel === 'EMAIL' ? EmailTemplates.signer_invite(this.brand, ctx) : null,
+      text: channel === 'WHATSAPP' ? WhatsAppTemplates.signer_invite(this.brand, ctx) : null,
       onFailed: async () => {
         await this.prisma.signerAccessToken.updateMany({ where: { tokenHash }, data: { revokedAt: new Date() } });
       },
@@ -143,42 +167,46 @@ export class EmailSenderService {
             envelopeId: env.id,
             signerId: signer.id,
             occurredAt: now,
-            metadata: { channel: 'EMAIL', to: maskEmail(signer.email), notificationId, linkExpiresAt: issued.expiresAt },
+            metadata: {
+              channel,
+              to: channel === 'WHATSAPP' ? maskPhone(signer.phone) : maskEmail(signer.email),
+              notificationId,
+              linkExpiresAt: issued.expiresAt,
+            },
           });
         });
       },
     };
   }
 
-  private async prepareOtp(signerId: string, challengeId: string, secret: string | undefined): Promise<Prepared> {
+  private async prepareOtp(signerId: string, challengeId: string, secret: string | undefined, channel: Channel): Promise<Prepared> {
     if (!secret) return { email: null, skipReason: 'código indisponível (job sem payload cifrado)' };
     const ch = await this.prisma.authenticationChallenge.findUnique({ where: { id: challengeId }, include: { signer: { include: { envelope: true } } } });
     if (!ch || ch.signerId !== signerId || ch.consumedAt || ch.invalidatedAt || ch.expiresAt <= new Date()) {
       return { email: null, skipReason: 'desafio não está mais ativo' };
     }
     const code = this.encryption.decrypt(secret);
-    return {
-      email: EmailTemplates.signer_otp(this.brand, {
-        signerName: ch.signer.name,
-        code,
-        minutes: Math.round(this.config.OTP_TTL_SECONDS / 60),
-        envelopeTitle: ch.signer.envelope.title,
-      }),
-    };
+    const ctx = { signerName: ch.signer.name, code, minutes: Math.round(this.config.OTP_TTL_SECONDS / 60), envelopeTitle: ch.signer.envelope.title };
+    return channel === 'WHATSAPP'
+      ? { email: null, text: WhatsAppTemplates.signer_otp(this.brand, ctx) }
+      : { email: EmailTemplates.signer_otp(this.brand, ctx) };
   }
 
-  private async prepareCompletedSigner(signerId: string): Promise<Prepared> {
+  private async prepareCompletedSigner(signerId: string, channel: Channel): Promise<Prepared> {
     const signer = await this.prisma.signer.findUnique({ where: { id: signerId }, include: { envelope: true } });
     if (!signer || signer.envelope.status !== 'COMPLETED') return { email: null, skipReason: 'envelope não concluído' };
-    const issued = await this.prisma.tx((tx) => issueSignerAccessToken(tx, this.encryption, signer.id, null, this.config.SIGNER_LINK_TTL_DAYS));
-    return {
-      email: EmailTemplates.envelope_completed(this.brand, {
-        recipientName: signer.name,
-        envelopeTitle: signer.envelope.title,
-        validationCode: signer.envelope.publicValidationCode,
-        link: this.link(`/sign/${issued.token}`),
-      }),
+    const issued = await this.prisma.tx((tx) =>
+      issueSignerAccessToken(tx, this.encryption, signer.id, null, this.config.SIGNER_LINK_TTL_DAYS, channel),
+    );
+    const ctx = {
+      recipientName: signer.name,
+      envelopeTitle: signer.envelope.title,
+      validationCode: signer.envelope.publicValidationCode,
+      link: this.link(`/sign/${issued.token}`),
     };
+    return channel === 'WHATSAPP'
+      ? { email: null, text: WhatsAppTemplates.envelope_completed(this.brand, ctx) }
+      : { email: EmailTemplates.envelope_completed(this.brand, ctx) };
   }
 
   private async prepareSignerStatus(template: 'envelope_cancelled_signer' | 'envelope_expired_signer', signerId: string): Promise<Prepared> {
