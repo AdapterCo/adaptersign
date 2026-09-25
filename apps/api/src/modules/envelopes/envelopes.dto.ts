@@ -93,6 +93,13 @@ export class CreateEnvelopeDto {
   @MaxLength(2000)
   message?: string;
 
+  @ApiPropertyOptional({ example: 'venda-123', description: 'Referência no sistema de origem (ex.: número do contrato)' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 120)
+  @Matches(/^[\x21-\x7E][\x20-\x7E]*$/, { message: 'externalRef aceita apenas caracteres ASCII imprimíveis.' })
+  externalRef?: string;
+
   @ApiPropertyOptional({ enum: SigningMode, default: SigningMode.PARALLEL })
   @IsOptional()
   @IsEnum(SigningMode)
@@ -246,4 +253,11 @@ export class ListEnvelopesQuery extends PaginationQueryDto {
   @IsString()
   @MaxLength(200)
   search?: string;
+
+  @ApiPropertyOptional({ example: 'venda-123', description: 'Referência no sistema de origem (ex.: número do contrato)' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 120)
+  @Matches(/^[\x21-\x7E][\x20-\x7E]*$/, { message: 'externalRef aceita apenas caracteres ASCII imprimíveis.' })
+  externalRef?: string;
 }

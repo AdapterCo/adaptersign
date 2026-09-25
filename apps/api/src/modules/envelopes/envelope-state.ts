@@ -80,9 +80,15 @@ export function nextSigningGroup(
 }
 
 /** Signatários que devem estar convidados dado o grupo corrente (inclui opcionais de grupos anteriores). */
-export function signersToInvite<T extends { id: string; signingGroup: number; status: SignerStatus }>(signers: T[], currentGroup: number | null): string[] {
+/** Signatários assinados pela integração (papel da empresa) nunca recebem convite. */
+export function signersToInvite<T extends { id: string; signingGroup: number; status: SignerStatus; authMethod?: string }>(
+  signers: T[],
+  currentGroup: number | null,
+): string[] {
   if (currentGroup === null) return [];
-  return signers.filter((s) => s.signingGroup <= currentGroup && s.status === SignerStatus.PENDING).map((s) => s.id);
+  return signers
+    .filter((s) => s.signingGroup <= currentGroup && s.status === SignerStatus.PENDING && s.authMethod !== 'INTEGRATION')
+    .map((s) => s.id);
 }
 
 /** Um signatário pode atuar quando seu grupo já foi alcançado. */

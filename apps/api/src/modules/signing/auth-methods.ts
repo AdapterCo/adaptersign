@@ -29,10 +29,17 @@ const REGISTRY: Record<AuthMethod, AuthMethodInfo> = {
   BIOMETRICS: { method: AuthMethod.BIOMETRICS, available: false, label: 'Biometria', unavailableReason: 'Ainda não disponível.' },
   CERTIFICATE: { method: AuthMethod.CERTIFICATE, available: false, label: 'Certificado digital', unavailableReason: 'Ainda não disponível.' },
   ICP_BRASIL: { method: AuthMethod.ICP_BRASIL, available: false, label: 'Certificado ICP-Brasil', unavailableReason: 'Previsto para fase posterior.' },
+  // Nunca escolhido manualmente: atribuído aos papéis da empresa em contratos criados pela integração.
+  INTEGRATION: {
+    method: AuthMethod.INTEGRATION,
+    available: false,
+    label: 'Integração autorizada da empresa (representante identificado pelo sistema de origem)',
+    unavailableReason: 'Atribuído automaticamente ao papel da empresa em contratos enviados pela integração.',
+  },
 };
 
 export function listAuthMethods(): AuthMethodInfo[] {
-  return Object.values(REGISTRY);
+  return Object.values(REGISTRY).filter((m) => m.method !== AuthMethod.INTEGRATION);
 }
 
 export function assertAuthMethodAvailable(method: AuthMethod): void {

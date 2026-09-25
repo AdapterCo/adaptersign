@@ -293,6 +293,88 @@ describe('Fluxo completo de assinatura (E2E)', () => {
     expect(still.body).toHaveLength(5);
   });
 
+  it('integração: contrato por modelo com assinatura da empresa, link do cliente e idempotência por externalRef', async () => {
+    const key = (await post(ownerA, '/api/v1/api-keys').send({ name: `Vendas ${run}` }).expect(201)).body.key as string;
+    const bearer = { Authorization: `Bearer ${key}` };
+    const api = () => request(app.getHttpServer());
+
+    await post(ownerA, '/api/v1/templates')
+      .send({
+        key: `moto-${run}`,
+        name: 'Contrato de moto',
+        roles: [
+          { key: 'loja', label: 'Loja', signingGroup: 1, isCompany: true },
+          { key: 'cliente', label: 'Cliente', signingGroup: 2 },
+        ],
+      })
+      .expect(201);
+
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const page = doc.addPage();
+    page.drawText(`Venda ${run}`, { x: 50, y: 700, size: 12, font });
+    page.drawText('[[AS:assinatura:loja]]', { x: 60, y: 200, size: 6, font });
+    page.drawText('[[AS:assinatura:cliente]]', { x: 320, y: 200, size: 6, font });
+    const pdf = Buffer.from(await doc.save());
+    const data = {
+      template: `moto-${run}`,
+      externalRef: `venda-${run}`,
+      title: `Venda ${run}`,
+      signers: [
+        { role: 'loja', name: 'Carlos Vendedor', email: `vendedor-${run}@exemplo.test`, externalId: 'u-17' },
+        { role: 'cliente', name: 'Maria Cliente', email: `maria-${run}@exemplo.test`, cpf: '529.982.247-25' },
+      ],
+    };
+    const send = (body: object, file = pdf) =>
+      api()
+        .post('/api/v1/envelopes/from-template')
+        .set(bearer)
+        .attach('file', file, { filename: 'venda.pdf', contentType: 'application/pdf' })
+        .field('data', JSON.stringify(body));
+
+    // Sem autorização da empresa → recusado (e API key não pode autorizar).
+    expect((await send(data).expect(422)).body.error.code).toBe('COMPANY_SIGNATURE_NOT_AUTHORIZED');
+    await api().post('/api/v1/organizations/current/company-signature').set(bearer).send({ accept: true, version: '1.0' }).expect(403);
+    const status = await ownerA.get('/api/v1/organizations/current/company-signature').expect(200);
+    expect(status.body.authorized).toBe(false);
+    await post(ownerA, '/api/v1/organizations/current/company-signature').send({ accept: true, version: status.body.text.version }).expect(201);
+
+    // PDF sem a âncora do cliente → recusado sem criar nada.
+    const bare = await PDFDocument.create();
+    bare.addPage().drawText('[[AS:assinatura:loja]]', { x: 60, y: 200, size: 6, font: await bare.embedFont(StandardFonts.Helvetica) });
+    const refused = await send({ ...data, externalRef: `sem-ancora-${run}` }, Buffer.from(await bare.save())).expect(422);
+    expect(refused.body.error.code).toBe('TEMPLATE_ANCHORS_MISMATCH');
+    const none = await api().get(`/api/v1/envelopes?externalRef=sem-ancora-${run}`).set(bearer).expect(200);
+    expect(none.body.data).toHaveLength(0);
+
+    const created = await send(data).expect(201);
+    expect(created.body.replayed).toBe(false);
+    expect(created.body.externalRef).toBe(`venda-${run}`);
+    const loja = created.body.signers.find((x: { role: string }) => x.role === 'loja');
+    const cliente = created.body.signers.find((x: { role: string }) => x.role === 'cliente');
+    expect(loja.status).toBe('SIGNED');
+    expect(loja.signingUrl).toBeNull();
+    expect(cliente.signingUrl).toMatch(/\/sign\/[A-Za-z0-9_-]{20,}$/);
+
+    // Reenvio do mesmo contrato: mesmo envelope, sem duplicar.
+    const again = await send(data).expect(201);
+    expect(again.body.id).toBe(created.body.id);
+    expect(again.body.replayed).toBe(true);
+    const list = await api().get(`/api/v1/envelopes?externalRef=venda-${run}`).set(bearer).expect(200);
+    expect(list.body.data).toHaveLength(1);
+
+    // Evidência: assinatura da empresa registrada pela integração.
+    const timeline = await api().get(`/api/v1/envelopes/${created.body.id}/timeline`).set(bearer).expect(200);
+    expect(timeline.body.events.some((e: { label: string }) => e.label.includes('integração autorizada'))).toBe(true);
+    const detail = await api().get(`/api/v1/envelopes/${created.body.id}`).set(bearer).expect(200);
+    expect(detail.body.signers.find((x: { id: string }) => x.id === loja.id)).toMatchObject({ authMethod: 'INTEGRATION', externalId: 'u-17' });
+
+    // Novo link para o cliente; nunca para a empresa.
+    const link = await api().post(`/api/v1/envelopes/${created.body.id}/signers/${cliente.id}/link`).set(bearer).expect(200);
+    expect(link.body.signingUrl).toMatch(/\/sign\//);
+    await api().post(`/api/v1/envelopes/${created.body.id}/signers/${loja.id}/link`).set(bearer).expect(409);
+  });
+
   it('logout-all revoga sessões (sessão revogada não autentica)', async () => {
     await post(ownerA, '/api/v1/auth/logout-all').expect(200);
     await ownerA.get('/api/v1/auth/me').expect(401);

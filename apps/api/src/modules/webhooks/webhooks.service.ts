@@ -202,11 +202,23 @@ export class WebhooksService {
     const envelope = p.envelopeId
       ? await this.prisma.envelope.findUnique({
           where: { id: String(p.envelopeId) },
-          select: { id: true, title: true, status: true, publicValidationCode: true, completedAt: true, expiresAt: true },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            publicValidationCode: true,
+            completedAt: true,
+            expiresAt: true,
+            externalRef: true,
+            documents: { orderBy: { position: 'asc' }, select: { id: true, finalStorageKey: true, documentVersion: { select: { filename: true } } } },
+          },
         })
       : null;
     const signer = p.signerId
-      ? await this.prisma.signer.findUnique({ where: { id: String(p.signerId) }, select: { id: true, name: true, email: true, status: true, role: true } })
+      ? await this.prisma.signer.findUnique({
+          where: { id: String(p.signerId) },
+          select: { id: true, name: true, email: true, status: true, role: true, roleKey: true },
+        })
       : null;
     return {
       id: event.id,
@@ -222,9 +234,18 @@ export class WebhooksService {
               validation_code: envelope.status === 'DRAFT' ? null : envelope.publicValidationCode,
               completed_at: envelope.completedAt?.toISOString() ?? null,
               expires_at: envelope.expiresAt?.toISOString() ?? null,
+              external_ref: envelope.externalRef,
+              // Para baixar o PDF final: GET /envelopes/{id}/documents/{document.id}/final (após COMPLETED).
+              documents: envelope.documents.map((d) => ({
+                id: d.id,
+                filename: d.documentVersion.filename,
+                final_available: !!d.finalStorageKey,
+              })),
             }
           : null,
-        signer: signer ? { id: signer.id, name: signer.name, email: signer.email, status: signer.status, role: signer.role } : null,
+        signer: signer
+          ? { id: signer.id, name: signer.name, email: signer.email, status: signer.status, role: signer.role, role_key: signer.roleKey }
+          : null,
         document_id: p.documentId ?? null,
       },
     };

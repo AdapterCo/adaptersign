@@ -34,6 +34,28 @@ const ACTOR_LABEL: Record<string, string> = {
   PUBLIC: 'Público',
 };
 
+/** Texto da representação (assinatura da empresa pela integração), a partir da evidência gravada. */
+export function describeRepresentation(evidence: unknown, tz: string): string | null {
+  const r = (evidence as { representation?: Record<string, unknown> } | null)?.representation as
+    | {
+        representing?: string;
+        representative?: { external_id?: string | null };
+        attested_by?: { type?: string; name?: string | null };
+        authorization?: { authorized_at?: string };
+      }
+    | undefined;
+  if (!r?.representing) return null;
+  const parts = [`Em nome de ${r.representing}`];
+  if (r.representative?.external_id) parts.push(`representante identificado no sistema de origem (id ${r.representative.external_id})`);
+  const via = r.attested_by?.type === 'api_key' ? 'integração (chave de API)' : 'usuário da plataforma';
+  parts.push(`registrada pela ${via}${r.attested_by?.name ? ` "${r.attested_by.name}"` : ''}`);
+  if (r.authorization?.authorized_at) {
+    const at = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, dateStyle: 'short', timeStyle: 'short' }).format(new Date(r.authorization.authorized_at));
+    parts.push(`sob autorização da empresa de ${at}`);
+  }
+  return parts.join(' · ');
+}
+
 /**
  * Finalização atômica (seções 25 e 95). Só marca COMPLETED depois de:
  * validar documentos (hash recalculado), validar a trilha encadeada, gerar e armazenar
@@ -165,6 +187,9 @@ export class FinalizationService {
             userAgent: s.signature!.userAgent,
             consentVersion: s.signature!.consent.legalTextVersion.version,
             consentSha256: s.signature!.consent.legalTextVersion.sha256,
+            consentLabel:
+              s.signature!.authMethod === 'INTEGRATION' ? 'Autorização de assinatura da empresa pela integração' : 'Termo de consentimento',
+            representation: describeRepresentation(s.signature!.evidence, tz),
             signatureId: s.signature!.id,
           })),
           events: chainEvents.map((e) => ({

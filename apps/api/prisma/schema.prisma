@@ -75,6 +75,9 @@ enum AuthMethod {
   BIOMETRICS
   CERTIFICATE
   ICP_BRASIL
+  // Assinatura da própria empresa registrada por uma integração autorizada (ver
+  // CompanySignatureAuthorization): o sistema de origem atesta o representante.
+  INTEGRATION
 }
 
 enum SignatureMethod {
@@ -95,6 +98,7 @@ enum LegalTextKind {
   TERMS
   PRIVACY_POLICY
   SIGNATURE_CONSENT
+  COMPANY_SIGNATURE_AUTHORIZATION
 }
 
 enum EvidenceReportStatus {
@@ -194,6 +198,8 @@ model Organization {
   webhooks     WebhookEndpoint[]
   templates    Template[]
   subscription Subscription?
+
+  companySignatureAuthorizations CompanySignatureAuthorization[]
 
   @@map("organizations")
 }
@@ -333,10 +339,15 @@ model Envelope {
   // Marcado quando todos os signatários obrigatórios concluíram; a finalização
   // (evidências + COMPLETED) é feita pelo worker de forma atômica.
   finalizationRequestedAt DateTime?      @map("finalization_requested_at") @db.Timestamptz(3)
+  // Referência do sistema de origem (ex.: número do contrato/venda) — correlação de integrações.
+  externalRef             String?        @map("external_ref")
+  // Modelo usado na criação (se houver).
+  templateId              String?        @map("template_id") @db.Uuid
   createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   organization   Organization       @relation(fields: [organizationId], references: [id])
+  template       Template?          @relation(fields: [templateId], references: [id])
   documents      EnvelopeDocument[]
   signers        Signer[]
   fields         EnvelopeField[]
@@ -345,6 +356,7 @@ model Envelope {
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
   @@index([status, expiresAt])
+  @@index([organizationId, externalRef])
   @@map("envelopes")
 }
 
@@ -401,6 +413,27 @@ model EnvelopeField {
   @@map("envelope_fields")
 }
 
+// Autorização (dada por um OWNER, uma única vez) para que integrações da organização registrem a
+// assinatura da própria empresa, em nome do representante informado pelo sistema de origem.
+// Revogável; o aceite referencia o texto legal versionado (COMPANY_SIGNATURE_AUTHORIZATION).
+model CompanySignatureAuthorization {
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  legalTextVersionId String    @map("legal_text_version_id") @db.Uuid
+  authorizedById     String    @map("authorized_by_id") @db.Uuid
+  authorizedAt       DateTime  @default(now()) @map("authorized_at") @db.Timestamptz(3)
+  ip                 String?
+  userAgent          String?   @map("user_agent")
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById        String?   @map("revoked_by_id") @db.Uuid
+
+  organization     Organization     @relation(fields: [organizationId], references: [id])
+  legalTextVersion LegalTextVersion @relation(fields: [legalTextVersionId], references: [id])
+
+  @@index([organizationId, revokedAt])
+  @@map("company_signature_authorizations")
+}
+
 // ───────────────────────────── Modelos ─────────────────────────────
 
 // Modelo de contrato: define os papéis (ex.: "loja", "cliente") e como os campos são posicionados
@@ -421,6 +454,7 @@ model Template {
 
   organization Organization   @relation(fields: [organizationId], references: [id])
   roles        TemplateRole[]
+  envelopes    Envelope[]
 
   @@unique([organizationId, key])
   @@index([organizationId, archivedAt])
@@ -466,6 +500,11 @@ model Signer {
   status          SignerStatus @default(PENDING)
   authMethod      AuthMethod   @default(EMAIL_OTP) @map("auth_method")
   required        Boolean      @default(true)
+  // Papel do modelo (ex.: "cliente") quando criado a partir de um modelo.
+  roleKey         String?      @map("role_key")
+  // Assinatura pela integração: empresa representada e id do representante no sistema de origem.
+  representing    String?
+  externalId      String?      @map("external_id")
   invitedAt       DateTime?    @map("invited_at") @db.Timestamptz(3)
   viewedAt        DateTime?    @map("viewed_at") @db.Timestamptz(3)
   authenticatedAt DateTime?    @map("authenticated_at") @db.Timestamptz(3)
@@ -557,7 +596,8 @@ model LegalTextVersion {
   sha256      String
   publishedAt DateTime      @default(now()) @map("published_at") @db.Timestamptz(3)
 
-  consents Consent[]
+  consents                       Consent[]
+  companySignatureAuthorizations CompanySignatureAuthorization[]
 
   @@unique([kind, version])
   @@map("legal_text_versions")

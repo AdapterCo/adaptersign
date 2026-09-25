@@ -71,3 +71,13 @@ describe('ordem de assinatura (grupos)', () => {
     expect(allRequiredSigned([])).toBe(false);
   });
 });
+
+describe('signersToInvite — papel da empresa pela integração', () => {
+  it('nunca convida signatários assinados pela integração', () => {
+    const signers = [
+      { id: 'loja', signingGroup: 1, status: SignerStatus.PENDING, required: true, authMethod: 'INTEGRATION' },
+      { id: 'cliente', signingGroup: 1, status: SignerStatus.PENDING, required: true, authMethod: 'EMAIL_OTP' },
+    ];
+    expect(signersToInvite(signers, nextSigningGroup(signers))).toEqual(['cliente']);
+  });
+});

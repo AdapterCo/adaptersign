@@ -56,6 +56,26 @@ export function serializeField(f: {
   return { id: f.id, envelopeDocumentId: f.envelopeDocumentId, signerId: f.signerId, type: f.type, page: f.page, x: f.x, y: f.y, width: f.width, height: f.height };
 }
 
+/** Dados de signatário que só o servidor define (criação a partir de modelo / integração). */
+export interface SignerInternal {
+  roleKey?: string;
+  /** Papel da empresa assinado pela integração autorizada. */
+  integration?: { representing: string; externalId: string | null };
+}
+
+export interface TemplateEnvelopeInput {
+  title: string;
+  message?: string;
+  expiresAt?: string;
+  externalRef: string | null;
+  templateId: string;
+  signingMode: SigningMode;
+  documentId: string;
+  signers: Array<{ input: SignerInputDto; internal: SignerInternal }>;
+  /** Campos já calculados pelas âncoras (página/coordenadas), por papel. */
+  fields: Array<{ role: string; type: FieldInputDto['type']; page: number; x: number; y: number; width: number; height: number }>;
+}
+
 const MAX_DOCUMENTS = 20;
 const MAX_SIGNERS = 50;
 const MAX_FIELDS = 200;
@@ -104,6 +124,7 @@ export class EnvelopesService {
         signingMode: dto.signingMode ?? SigningMode.PARALLEL,
         expiresAt,
         reminderIntervalHours: dto.reminderIntervalHours ?? null,
+        externalRef: dto.externalRef ?? null,
         ...creatorFields(auth),
       });
       await this.usage.increment(tx, auth.organizationId, UsageMetric.ENVELOPES_CREATED, 1);
@@ -113,7 +134,7 @@ export class EnvelopesService {
         organizationId: auth.organizationId,
         envelopeId: envelope.id,
         ...client,
-        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt: envelope.expiresAt },
+        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt: envelope.expiresAt, externalRef: envelope.externalRef },
       });
       for (const d of dto.documents ?? []) await this.addDocumentTx(tx, auth, envelope.id, d, client);
       for (const s of dto.signers ?? []) await this.addSignerTx(tx, auth, envelope.id, s, client);
@@ -129,6 +150,61 @@ export class EnvelopesService {
     });
     await this.outbox.dispatch(events);
     return this.get(auth, id);
+  }
+
+  /**
+   * Rascunho completo a partir de um modelo (documento, signatários com papéis e campos das
+   * âncoras) numa única transação. A ativação e a assinatura da empresa ficam com o chamador.
+   */
+  async createFromTemplate(auth: AuthContext, input: TemplateEnvelopeInput, client: ClientInfo): Promise<string> {
+    const expiresAt = this.parseExpiry(input.expiresAt);
+    const events: EmittedEvent[] = [];
+    const id = await this.prisma.tx(async (tx) => {
+      await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
+      const envelope = await this.createWithUniqueCode(tx, {
+        organizationId: auth.organizationId,
+        title: cleanText(input.title),
+        message: input.message ? cleanText(input.message, 2000) : null,
+        signingMode: input.signingMode,
+        expiresAt,
+        externalRef: input.externalRef,
+        templateId: input.templateId,
+        ...creatorFields(auth),
+      });
+      await this.usage.increment(tx, auth.organizationId, UsageMetric.ENVELOPES_CREATED, 1);
+      await this.audit.record(tx, {
+        eventType: AuditEventType.ENVELOPE_CREATED,
+        actor: actorOf(auth),
+        organizationId: auth.organizationId,
+        envelopeId: envelope.id,
+        ...client,
+        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt, externalRef: input.externalRef, templateId: input.templateId },
+      });
+      await this.addDocumentTx(tx, auth, envelope.id, { documentId: input.documentId }, client);
+      const envelopeDocument = await tx.envelopeDocument.findFirstOrThrow({ where: { envelopeId: envelope.id }, select: { id: true } });
+      const signerByRole = new Map<string, string>();
+      for (const s of input.signers) {
+        const created = await this.addSignerTx(tx, auth, envelope.id, s.input, client, s.internal);
+        if (s.internal.roleKey) signerByRole.set(s.internal.roleKey, created);
+      }
+      const fields = input.fields.map((f) => {
+        const signerId = signerByRole.get(f.role);
+        if (!signerId) throw Errors.validation(`Papel sem signatário: ${f.role}.`);
+        return { envelopeDocumentId: envelopeDocument.id, signerId, type: f.type, page: f.page, x: f.x, y: f.y, width: f.width, height: f.height };
+      });
+      await this.replaceFieldsTx(tx, auth, envelope.id, fields, client, { source: 'template', templateId: input.templateId });
+      events.push(
+        await this.outbox.emit(tx, {
+          type: DomainEvent.ENVELOPE_CREATED,
+          organizationId: auth.organizationId,
+          payload: { envelopeId: envelope.id },
+          requestId: client.requestId,
+        }),
+      );
+      return envelope.id;
+    });
+    await this.outbox.dispatch(events);
+    return id;
   }
 
   private async createWithUniqueCode(tx: Tx, data: Omit<Prisma.EnvelopeUncheckedCreateInput, 'publicValidationCode'>) {
@@ -254,10 +330,17 @@ export class EnvelopesService {
     return this.get(auth, envelopeId);
   }
 
-  private async addSignerTx(tx: Tx, auth: AuthContext, envelopeId: string, input: SignerInputDto, client: ClientInfo) {
+  private async addSignerTx(
+    tx: Tx,
+    auth: AuthContext,
+    envelopeId: string,
+    input: SignerInputDto,
+    client: ClientInfo,
+    internal: SignerInternal = {},
+  ): Promise<string> {
     const env = await tx.envelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { signingMode: true } });
-    const authMethod = input.authMethod ?? AuthMethod.EMAIL_OTP;
-    assertAuthMethodAvailable(authMethod);
+    const authMethod = internal.integration ? AuthMethod.INTEGRATION : (input.authMethod ?? AuthMethod.EMAIL_OTP);
+    if (!internal.integration) assertAuthMethodAvailable(authMethod);
     const count = await tx.signer.count({ where: { envelopeId } });
     if (count >= MAX_SIGNERS) throw Errors.unprocessable('TOO_MANY_SIGNERS', `Máximo de ${MAX_SIGNERS} signatários por envelope.`);
     const email = normalizeEmail(input.email);
@@ -292,6 +375,9 @@ export class EnvelopesService {
         signingGroup,
         authMethod,
         required: input.required ?? true,
+        roleKey: internal.roleKey ?? null,
+        representing: internal.integration ? cleanText(internal.integration.representing, 120) : null,
+        externalId: internal.integration?.externalId ? cleanText(internal.integration.externalId, 120) : null,
       },
     });
     await this.audit.record(tx, {
@@ -301,8 +387,9 @@ export class EnvelopesService {
       envelopeId,
       signerId: signer.id,
       ...client,
-      metadata: { email: maskEmail(email), role: signer.role, signingGroup, authMethod, required: signer.required },
+      metadata: { email: maskEmail(email), role: signer.role, signingGroup, authMethod, required: signer.required, roleKey: signer.roleKey },
     });
+    return signer.id;
   }
 
   async removeSigner(auth: AuthContext, envelopeId: string, signerId: string, client: ClientInfo) {
@@ -623,11 +710,13 @@ export class EnvelopesService {
     const where: Prisma.EnvelopeWhereInput = {
       organizationId: auth.organizationId,
       ...(q.status ? { status: q.status } : {}),
+      ...(q.externalRef ? { externalRef: q.externalRef } : {}),
       ...(search
         ? {
             OR: [
               { title: { contains: search, mode: 'insensitive' } },
               { publicValidationCode: { equals: search.toUpperCase() } },
+              { externalRef: { equals: search } },
               { signers: { some: { OR: [{ name: { contains: search, mode: 'insensitive' } }, { email: { contains: search.toLowerCase() } }] } } },
               { documents: { some: { documentVersion: { document: { title: { contains: search, mode: 'insensitive' } } } } } },
             ],
@@ -646,6 +735,7 @@ export class EnvelopesService {
           title: true,
           status: true,
           publicValidationCode: true,
+          externalRef: true,
           createdAt: true,
           activatedAt: true,
           completedAt: true,
@@ -661,6 +751,7 @@ export class EnvelopesService {
         title: e.title,
         status: e.status,
         validationCode: e.status === EnvelopeStatus.DRAFT ? null : e.publicValidationCode,
+        externalRef: e.externalRef,
         createdAt: e.createdAt,
         activatedAt: e.activatedAt,
         completedAt: e.completedAt,
@@ -693,6 +784,8 @@ export class EnvelopesService {
       status: env.status,
       signingMode: env.signingMode,
       validationCode: env.status === EnvelopeStatus.DRAFT ? null : env.publicValidationCode,
+      externalRef: env.externalRef,
+      templateId: env.templateId,
       expiresAt: env.expiresAt,
       reminderIntervalHours: env.reminderIntervalHours,
       createdAt: env.createdAt,
@@ -723,6 +816,9 @@ export class EnvelopesService {
         cpf: maskCpf(s.cpfLast2),
         role: s.role,
         signingGroup: s.signingGroup,
+        roleKey: s.roleKey,
+        representing: s.representing,
+        externalId: s.externalId,
         status: s.status,
         required: s.required,
         authMethod: s.authMethod,

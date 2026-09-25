@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   ActorType,
+  AuthMethod,
   EnvelopeStatus,
   Prisma,
   SignatureMethod,
@@ -16,7 +17,7 @@ import { sha256Hex } from '../../common/crypto/crypto.util';
 import { Errors } from '../../common/errors/app-error';
 import { cleanText } from '../../common/util/text';
 import type { ClientInfo } from '../../common/http/client-info';
-import { AuditService } from '../audit/audit.service';
+import { AuditService, type Actor } from '../audit/audit.service';
 import { AuditEventType } from '../audit/audit-events';
 import { OutboxService, type EmittedEvent } from '../outbox/outbox.service';
 import { DomainEvent } from '../outbox/domain-events';
@@ -45,6 +46,23 @@ export interface SignContext {
   signatureSessionId: string;
   signerId: string;
   envelopeId: string;
+  client: ClientInfo;
+}
+
+/** Assinatura da empresa registrada por integração autorizada (papel da empresa no modelo). */
+export interface IntegrationSignContext {
+  envelopeId: string;
+  signerId: string;
+  /** Quem registrou (API key ou usuário) — atesta o representante. */
+  actor: Actor;
+  attestedBy: { type: 'api_key' | 'user'; id: string; name: string | null };
+  /** Autorização vigente da organização (aceite do OWNER). */
+  authorization: {
+    id: string;
+    authorizedById: string;
+    authorizedAt: Date;
+    legalText: { id: string; version: string; sha256: string };
+  };
   client: ClientInfo;
 }
 
@@ -283,6 +301,148 @@ export class SignatureEngine {
     events.push(...(await this.evaluateProgress(tx, envelope, ctx.client)));
 
     return { result: { signatureId: signature.id, signedAt: now, idempotentReplay: false }, events, replay: false };
+  }
+
+  /**
+   * Registra a assinatura do papel da EMPRESA em nome do representante informado pelo sistema de
+   * origem. Só vale para signatários com authMethod INTEGRATION (criados pela integração) e exige a
+   * autorização vigente da organização. A evidência deixa explícito que não houve ato manual na
+   * plataforma: o representante foi atestado pela integração, sob a autorização do OWNER.
+   */
+  async signByIntegration(ctx: IntegrationSignContext): Promise<SignResult> {
+    const outcome = await this.prisma.tx(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "envelopes" WHERE "id" = ${ctx.envelopeId}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "signers" WHERE "id" = ${ctx.signerId}::uuid FOR UPDATE`;
+      const envelope = await tx.envelope.findUniqueOrThrow({ where: { id: ctx.envelopeId } });
+      const signer = await tx.signer.findUniqueOrThrow({ where: { id: ctx.signerId }, include: { signature: true } });
+      if (signer.signature) {
+        return { result: { signatureId: signer.signature.id, signedAt: signer.signature.signedAt, idempotentReplay: true }, events: [] as EmittedEvent[] };
+      }
+      if (signer.envelopeId !== envelope.id || signer.authMethod !== AuthMethod.INTEGRATION || !signer.representing) throw Errors.forbidden();
+      const now = new Date();
+      if (!SIGNABLE_ENVELOPE_STATUSES.includes(envelope.status) || envelope.finalizationRequestedAt) {
+        throw Errors.conflict('ENVELOPE_NOT_SIGNABLE', 'Este envelope não aceita mais assinaturas.');
+      }
+      if (envelope.expiresAt && envelope.expiresAt <= now) throw Errors.conflict('ENVELOPE_EXPIRED', 'Este envelope expirou.');
+      const signers = await tx.signer.findMany({ where: { envelopeId: envelope.id } });
+      if (!isSignersTurn(signers, signer.signingGroup)) throw Errors.conflict('NOT_YOUR_TURN', 'Ainda não é a vez da empresa assinar.');
+
+      const docs = await tx.envelopeDocument.findMany({
+        where: { envelopeId: envelope.id },
+        orderBy: { position: 'asc' },
+        include: { documentVersion: { select: { id: true, documentId: true, sha256: true, filename: true } } },
+      });
+      for (const d of docs) {
+        if (d.documentVersion.sha256 !== d.originalSha256) throw new Error(`Inconsistência de hash no documento ${d.id}`);
+      }
+      const documentHashes = docs.map((d) => ({
+        envelopeDocumentId: d.id,
+        documentId: d.documentVersion.documentId,
+        versionId: d.documentVersion.id,
+        filename: d.documentVersion.filename,
+        sha256: d.originalSha256,
+      }));
+
+      const base = { actor: ctx.actor, organizationId: envelope.organizationId, envelopeId: envelope.id, signerId: signer.id, ...ctx.client };
+      const auth = ctx.authorization;
+      // Sessão técnica (sem token utilizável): mantém o mesmo modelo de evidência das demais assinaturas.
+      const session = await tx.signatureSession.create({
+        data: {
+          signerId: signer.id,
+          envelopeId: envelope.id,
+          tokenHash: `integration:${randomUUID()}`,
+          authenticatedAt: now,
+          authMethod: AuthMethod.INTEGRATION,
+          ip: ctx.client.ip,
+          userAgent: ctx.client.userAgent,
+          expiresAt: now,
+          revokedAt: now,
+        },
+      });
+      const consent = await tx.consent.create({
+        data: {
+          organizationId: envelope.organizationId,
+          envelopeId: envelope.id,
+          signerId: signer.id,
+          legalTextVersionId: auth.legalText.id,
+          accepted: true,
+          documentHashes: documentHashes as unknown as Prisma.InputJsonArray,
+          ip: ctx.client.ip,
+          userAgent: ctx.client.userAgent,
+        },
+      });
+      const representation = {
+        representing: signer.representing,
+        representative: { name: signer.name, email: signer.email, external_id: signer.externalId },
+        attested_by: ctx.attestedBy,
+        authorization: {
+          id: auth.id,
+          authorized_by_id: auth.authorizedById,
+          authorized_at: auth.authorizedAt.toISOString(),
+          text_version: auth.legalText.version,
+          text_sha256: auth.legalText.sha256,
+        },
+      };
+      await this.audit.record(tx, {
+        ...base,
+        eventType: AuditEventType.SIGNATURE_BY_INTEGRATION,
+        occurredAt: now,
+        metadata: { ...representation, representative: { name: signer.name, external_id: signer.externalId }, documents: documentHashes },
+      });
+      const evidence = {
+        event: 'SIGNATURE_COMPLETED',
+        signer_id: signer.id,
+        envelope_id: envelope.id,
+        documents: documentHashes.map((d) => ({ document_id: d.documentId, version_id: d.versionId, sha256: d.sha256 })),
+        timestamp: now.toISOString(),
+        authentication: { method: AuthMethod.INTEGRATION, authenticated_at: now.toISOString(), session_id: session.id },
+        network: { ip: ctx.client.ip, user_agent: ctx.client.userAgent },
+        consent: { accepted: true, terms_version: auth.legalText.version, terms_sha256: auth.legalText.sha256, consent_id: consent.id },
+        signature: { method: SignatureMethod.TYPED, asset_sha256: null },
+        signer: { role: signer.role, signing_group: signer.signingGroup },
+        representation,
+      };
+      const signature = await tx.signature.create({
+        data: {
+          organizationId: envelope.organizationId,
+          envelopeId: envelope.id,
+          signerId: signer.id,
+          consentId: consent.id,
+          signatureSessionId: session.id,
+          method: SignatureMethod.TYPED,
+          typedName: signer.name,
+          authMethod: AuthMethod.INTEGRATION,
+          evidence: evidence as Prisma.InputJsonObject,
+          ip: ctx.client.ip,
+          userAgent: ctx.client.userAgent,
+          signedAt: now,
+        },
+      });
+      const updated = await tx.signer.updateMany({
+        where: { id: signer.id, status: { in: [SignerStatus.PENDING, SignerStatus.INVITED, SignerStatus.VIEWED, SignerStatus.AUTHENTICATED] } },
+        data: { status: SignerStatus.SIGNED, authenticatedAt: now, signedAt: now },
+      });
+      if (updated.count !== 1) throw Errors.conflict('SIGNER_STATE_CHANGED', 'Estado do signatário mudou. Tente novamente.');
+      await this.usage.increment(tx, envelope.organizationId, UsageMetric.SIGNATURES_COMPLETED, 1);
+      await this.audit.record(tx, {
+        ...base,
+        eventType: AuditEventType.SIGNATURE_COMPLETED,
+        occurredAt: now,
+        metadata: { signatureId: signature.id, method: SignatureMethod.TYPED, authMethod: AuthMethod.INTEGRATION, consentId: consent.id },
+      });
+      const events: EmittedEvent[] = [
+        await this.outbox.emit(tx, {
+          type: DomainEvent.SIGNER_SIGNED,
+          organizationId: envelope.organizationId,
+          payload: { envelopeId: envelope.id, signerId: signer.id },
+          requestId: ctx.client.requestId,
+        }),
+      ];
+      events.push(...(await this.evaluateProgress(tx, envelope, ctx.client)));
+      return { result: { signatureId: signature.id, signedAt: now, idempotentReplay: false }, events };
+    }, 20000);
+    await this.outbox.dispatch(outcome.events);
+    return outcome.result;
   }
 
   /**

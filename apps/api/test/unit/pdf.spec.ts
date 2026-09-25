@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { describeRepresentation } from '../../src/modules/evidence/finalization.service';
 import { hasPdfExtension, hasPdfMagic, inspectPdf } from '../../src/common/util/pdf-validation';
 import { buildEvidenceReport } from '../../src/modules/evidence/evidence-report.builder';
 import { buildFinalDocument } from '../../src/modules/evidence/final-document.builder';
@@ -83,7 +84,26 @@ describe('geração de documentos de evidência', () => {
           userAgent: 'Mozilla/5.0',
           consentVersion: '1.0',
           consentSha256: 'c'.repeat(64),
+          consentLabel: 'Termo de consentimento',
+          representation: null,
           signatureId: 'sig-1',
+        },
+        {
+          name: 'Carlos Vendedor',
+          email: 'c***s@l***.com',
+          cpf: null,
+          role: 'SIGNER',
+          authentication: 'Integração autorizada da empresa (representante identificado pelo sistema de origem)',
+          authenticatedAt: signedAt,
+          signedAt,
+          signatureMethod: 'TYPED',
+          ip: '203.0.*.*',
+          userAgent: 'sistema-de-vendas/1.0',
+          consentVersion: '1.0',
+          consentSha256: 'e'.repeat(64),
+          consentLabel: 'Autorização de assinatura da empresa pela integração',
+          representation: 'Em nome de Loja Fictícia · representante identificado no sistema de origem (id u-17) · registrada pela integração (chave de API) "Vendas"',
+          signatureId: 'sig-2',
         },
       ],
       events: Array.from({ length: 60 }, (_, i) => ({ sequence: i + 1, occurredAt: signedAt, label: 'Evento', actor: 'Sistema', eventHash: 'd'.repeat(64) })),
@@ -91,5 +111,25 @@ describe('geração de documentos de evidência', () => {
     });
     const out = await PDFDocument.load(bytes);
     expect(out.getPageCount()).toBeGreaterThan(1);
+  });
+});
+
+describe('describeRepresentation', () => {
+  it('descreve a assinatura da empresa pela integração a partir da evidência', () => {
+    const text = describeRepresentation(
+      {
+        representation: {
+          representing: 'Loja Fictícia',
+          representative: { name: 'Carlos', email: 'c@x.test', external_id: 'u-17' },
+          attested_by: { type: 'api_key', id: 'k1', name: 'Sistema de vendas' },
+          authorization: { authorized_at: '2026-09-25T13:00:00.000Z' },
+        },
+      },
+      'America/Sao_Paulo',
+    );
+    expect(text).toBe(
+      'Em nome de Loja Fictícia · representante identificado no sistema de origem (id u-17) · registrada pela integração (chave de API) "Sistema de vendas" · sob autorização da empresa de 25/09/2026, 10:00',
+    );
+    expect(describeRepresentation({ signer: {} }, 'UTC')).toBeNull();
   });
 });

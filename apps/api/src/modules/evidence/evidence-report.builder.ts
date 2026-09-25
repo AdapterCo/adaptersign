@@ -28,6 +28,10 @@ export interface EvidenceReportData {
     userAgent: string | null;
     consentVersion: string;
     consentSha256: string;
+    /** Texto aceito: consentimento do signatário ou autorização da empresa (integração). */
+    consentLabel: string;
+    /** Assinatura pela integração: em nome de quem, atestada por quem e sob qual autorização. */
+    representation: string | null;
     signatureId: string;
   }>;
   events: Array<{ sequence: number; occurredAt: Date; label: string; actor: string; eventHash: string }>;
@@ -97,7 +101,8 @@ export async function buildEvidenceReport(data: EvidenceReportData): Promise<Uin
     w.keyValue('Autenticação', `${s.authentication}${s.authenticatedAt ? ` — ${fmt(s.authenticatedAt, tz)}` : ''}`, 12);
     w.keyValue('Assinado em', fmt(s.signedAt, tz), 12);
     w.keyValue('Representação visual', METHOD_LABEL[s.signatureMethod] ?? s.signatureMethod, 12);
-    w.keyValue('Aceite', `Termo de consentimento v${s.consentVersion} (SHA-256 ${s.consentSha256})`, 12);
+    if (s.representation) w.keyValue('Representação', s.representation, 12);
+    w.keyValue('Aceite', `${s.consentLabel} v${s.consentVersion} (SHA-256 ${s.consentSha256})`, 12);
     w.keyValue('Rede (auxiliar, não prova identidade)', `IP ${s.ip ?? '—'} · ${s.userAgent ?? '—'}`, 12);
     w.keyValue('Registro da assinatura', s.signatureId, 12);
     w.space(4);

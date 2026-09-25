@@ -191,9 +191,17 @@ export class TemplatesService {
     return out;
   }
 
-  /** Testa um PDF de exemplo contra o modelo, sem armazenar nada. */
-  async test(auth: AuthContext, templateId: string, file: UploadedPdf | undefined) {
-    const template = await this.findActive(auth, templateId);
+  async findActiveByKey(auth: AuthContext, key: string): Promise<TemplateWithRoles> {
+    const t = await this.prisma.template.findFirst({
+      where: { key, organizationId: auth.organizationId, archivedAt: null },
+      include: templateInclude,
+    });
+    if (!t) throw Errors.notFound('TEMPLATE_NOT_FOUND', 'Modelo não encontrado.');
+    return t;
+  }
+
+  /** Validação do PDF recebido (antes de qualquer armazenamento). */
+  async assertPdfUpload(file: UploadedPdf | undefined): Promise<Buffer> {
     if (!file || !file.buffer?.length) throw Errors.validation('Nenhum arquivo enviado.');
     if (!hasPdfExtension(file.originalname || '') || file.mimetype !== 'application/pdf') {
       throw Errors.validation('Somente arquivos PDF são aceitos.');
@@ -202,8 +210,19 @@ export class TemplatesService {
       throw Errors.validation('Arquivo excede o tamanho máximo permitido.', { max_bytes: this.config.UPLOAD_MAX_BYTES });
     }
     await inspectPdf(file.buffer);
-    const [scanned] = await this.scanDocuments([{ ref: 0, pdf: file.buffer }]);
-    const plan = planTemplateFields(template.roles, [scanned]);
+    return file.buffer;
+  }
+
+  /** Localiza as âncoras de um único PDF e calcula os campos do modelo. */
+  async planPdf(template: TemplateWithRoles, pdf: Buffer) {
+    const [scanned] = await this.scanDocuments([{ ref: 0, pdf }]);
+    return { scanned, plan: planTemplateFields(template.roles, [scanned]) };
+  }
+
+  /** Testa um PDF de exemplo contra o modelo, sem armazenar nada. */
+  async test(auth: AuthContext, templateId: string, file: UploadedPdf | undefined) {
+    const template = await this.findActive(auth, templateId);
+    const { scanned, plan } = await this.planPdf(template, await this.assertPdfUpload(file));
     return {
       ok: isPlanValid(plan),
       pages: scanned.pages.map((p) => ({ page: p.page, width: p.viewWidth, height: p.viewHeight })),
