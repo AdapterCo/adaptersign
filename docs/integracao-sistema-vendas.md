@@ -84,7 +84,7 @@ Regras:
 | `title` | sim | Aparece para o cliente e nos e-mails |
 | `signers[]` | sim | Exatamente um por papel do modelo |
 | `signers[].externalId` | recomendado (loja) | Id do vendedor logado no sistema de vendas — vai para a evidência |
-| `signers[].cpf` / `phone` | recomendado (cliente) | CPF é guardado cifrado; telefone será usado no WhatsApp (fase 3) |
+| `signers[].cpf` / `phone` | recomendado (cliente) | CPF é guardado cifrado; com o telefone, convite e código também chegam pelo WhatsApp |
 | `message`, `expiresAt`, `representing` | não | `representing` = nome da empresa representada (padrão: nome da organização) |
 
 Exemplo (Node.js 18+):
@@ -141,10 +141,13 @@ link novo para o cliente. Para gerar um contrato novo para a mesma venda (ex.: a
 
 ## 4. Entregar o link ao cliente
 
-- O cliente **já recebe o convite por e-mail** automaticamente.
-- O sistema de vendas pode também mostrar o `signingUrl` na tela (QR code) ou enviá-lo por WhatsApp.
+- O cliente **já recebe o convite por e-mail** e, se o `phone` foi informado e o WhatsApp da plataforma
+  estiver ativo, **também pelo WhatsApp** (número central do Adapter Sign) — não é preciso enviar nada.
+- O sistema de vendas pode também mostrar o `signingUrl` na tela (QR code). Ao abrir um link entregue pela
+  API, o código de verificação vai por WhatsApp (quando houver telefone); o cliente pode pedir por e-mail.
 - Link novo (ex.: cliente perdeu o e-mail): `POST /envelopes/{id}/signers/{signerId}/link` → `{ "signingUrl", "expiresAt" }`.
-- Na abertura do link, o cliente confirma um código enviado por e-mail antes de assinar.
+- Na abertura do link, o cliente confirma um código de 6 dígitos (pelo mesmo canal do link) antes de assinar.
+- Informe o telefone com DDD (ex.: `(24) 99999-1234` ou `+5524999991234`); números inválidos são recusados com `400`.
 
 ## 5. Receber o resultado (webhooks)
 

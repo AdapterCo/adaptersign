@@ -164,6 +164,39 @@ docker compose -p adaptersign logs --tail 50 adaptersign-worker | grep -iE 'emai
 
 E-mails que falharam ficam registrados (status `FAILED`) e aparecem no painel da plataforma.
 
+## WhatsApp (Evolution API)
+
+Convites, lembretes, códigos de verificação e o aviso de conclusão também podem ir por WhatsApp, a partir de
+um **número central** da plataforma, usando a Evolution API (v2) que já roda na VPS. Nada é alterado na
+Evolution: o Adapter Sign só chama a API dela.
+
+1. Na Evolution, crie (ou escolha) uma instância só para o Adapter Sign e conecte o número central (QR code).
+2. No `.env` do Adapter Sign:
+
+   ```env
+   WHATSAPP_PROVIDER=evolution
+   EVOLUTION_API_URL=https://<url-publica-da-evolution>
+   EVOLUTION_API_KEY=<apikey global da Evolution>
+   EVOLUTION_INSTANCE=<nome da instância>
+   ```
+
+   Use a URL **pública** (HTTPS) da Evolution: o worker do Adapter Sign não entra na rede das outras
+   aplicações. A chave nunca é registrada em log.
+3. Recrie `adaptersign-api` e `adaptersign-worker` (`docker compose ... up -d`).
+
+Comportamento:
+
+- Signatário **com telefone**: recebe o convite por e-mail **e** WhatsApp; o código de verificação vai pelo
+  **mesmo canal do link** que ele abriu (links entregues pela API do sistema de origem → WhatsApp). Na tela,
+  ele pode pedir o código pelo outro canal.
+- Método "Código por WhatsApp" (`WHATSAPP_OTP`) passa a aparecer como disponível ao criar envelopes.
+- Número sem WhatsApp (Evolution responde 400/404): a notificação falha **sem novas tentativas**; o e-mail
+  continua valendo. Instabilidade (5xx, timeout): até 5 tentativas com espera crescente.
+- Evidência: o relatório registra o método efetivamente usado (código por e-mail ou por WhatsApp) e o
+  destino mascarado.
+
+Teste rápido (na VPS): crie um envelope para você mesmo informando o seu WhatsApp e confira convite e código.
+
 ## Backup e restauração
 
 ```bash

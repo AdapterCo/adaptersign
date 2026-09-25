@@ -60,6 +60,7 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | POST | `/envelopes/:id/cancel` `{ "reason"? }` | Cancela (histórico preservado) |
 | POST | `/envelopes/:id/remind` `{ "signerId"? }` | Lembrete manual (no máximo 1 por hora por signatário) |
 | POST | `/envelopes/:id/signers/:signerId/link` | Novo link individual de assinatura (ex.: para enviar por WhatsApp) |
+| POST | `/sign/otp/request` `{ "channel"?: "EMAIL" \| "WHATSAPP" }` | (Signatário) envia o código — padrão: o canal do link aberto |
 | GET/POST/DELETE | `/organizations/current/company-signature` | Autorização da assinatura da empresa pela integração (POST/DELETE: somente OWNER, via sessão) |
 | GET | `/envelopes/:id/timeline` | Eventos e verificação da cadeia |
 | GET | `/envelopes/:id/documents/:envelopeDocumentId/final` | PDF final (após `COMPLETED`) |
