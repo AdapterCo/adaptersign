@@ -32,6 +32,7 @@ import { assertAuthMethodAvailable, authMethodLabel } from '../signing/auth-meth
 import { TemplatesService, isPlanValid } from '../templates/templates.service';
 import { planTemplateFields } from '../templates/anchors';
 import type { ApplyTemplateDto } from '../templates/templates.dto';
+import { buildEnvelopeWhere, CPF_INDEX_CONTEXT } from './envelope-filters';
 import { assertEnvelopeTransition, nextSigningGroup, signersToInvite, SIGNABLE_ENVELOPE_STATUSES } from './envelope-state';
 import type {
   CreateEnvelopeDto,
@@ -353,11 +354,13 @@ export class EnvelopesService {
     if (authMethod === AuthMethod.WHATSAPP_OTP && !phone) throw Errors.validation('Informe o telefone (WhatsApp) do signatário.');
     let cpfEncrypted: string | null = null;
     let cpfLast2: string | null = null;
+    let cpfHash: string | null = null;
     if (input.cpf) {
       const cpf = normalizeCpf(input.cpf);
       if (!cpf) throw Errors.validation('CPF inválido.');
       cpfEncrypted = this.encryption.encrypt(cpf);
       cpfLast2 = cpf.slice(-2);
+      cpfHash = this.encryption.hashToken(cpf, CPF_INDEX_CONTEXT);
     }
     let signingGroup = 1;
     if (env.signingMode === SigningMode.SEQUENTIAL) {
@@ -378,6 +381,7 @@ export class EnvelopesService {
         phone,
         cpfEncrypted,
         cpfLast2,
+        cpfHash,
         role: input.role ?? SignerRole.SIGNER,
         signingGroup,
         authMethod,
@@ -713,23 +717,24 @@ export class EnvelopesService {
 
   async list(auth: AuthContext, q: ListEnvelopesQuery) {
     const { page, pageSize, skip, take } = resolvePagination(q);
-    const search = q.search?.trim();
-    const where: Prisma.EnvelopeWhereInput = {
-      organizationId: auth.organizationId,
-      ...(q.status ? { status: q.status } : {}),
-      ...(q.externalRef ? { externalRef: q.externalRef } : {}),
-      ...(search
-        ? {
-            OR: [
-              { title: { contains: search, mode: 'insensitive' } },
-              { publicValidationCode: { equals: search.toUpperCase() } },
-              { externalRef: { equals: search } },
-              { signers: { some: { OR: [{ name: { contains: search, mode: 'insensitive' } }, { email: { contains: search.toLowerCase() } }] } } },
-              { documents: { some: { documentVersion: { document: { title: { contains: search, mode: 'insensitive' } } } } } },
-            ],
-          }
-        : {}),
-    };
+    const cpf: { filter?: string | null; fromSearch?: string | null } = {};
+    if (q.cpf !== undefined || q.sameCpfAs) {
+      let hash: string | null = null;
+      if (q.sameCpfAs) {
+        const ref = await this.prisma.signer.findFirst({
+          where: { id: q.sameCpfAs, organizationId: auth.organizationId },
+          select: { cpfHash: true },
+        });
+        hash = ref?.cpfHash ?? null;
+      } else {
+        const normalized = normalizeCpf(q.cpf ?? '');
+        hash = normalized ? this.encryption.hashToken(normalized, CPF_INDEX_CONTEXT) : null;
+      }
+      cpf.filter = hash;
+    }
+    const searchCpf = q.search ? normalizeCpf(q.search) : null;
+    if (searchCpf) cpf.fromSearch = this.encryption.hashToken(searchCpf, CPF_INDEX_CONTEXT);
+    const where = buildEnvelopeWhere(auth.organizationId, q, cpf);
     const [total, rows] = await Promise.all([
       this.prisma.envelope.count({ where }),
       this.prisma.envelope.findMany({
@@ -743,6 +748,8 @@ export class EnvelopesService {
           status: true,
           publicValidationCode: true,
           externalRef: true,
+          createdByApiKeyId: true,
+          template: { select: { id: true, name: true } },
           createdAt: true,
           activatedAt: true,
           completedAt: true,
@@ -759,6 +766,8 @@ export class EnvelopesService {
         status: e.status,
         validationCode: e.status === EnvelopeStatus.DRAFT ? null : e.publicValidationCode,
         externalRef: e.externalRef,
+        origin: e.createdByApiKeyId ? 'integration' : 'manual',
+        template: e.template,
         createdAt: e.createdAt,
         activatedAt: e.activatedAt,
         completedAt: e.completedAt,
@@ -793,6 +802,7 @@ export class EnvelopesService {
       validationCode: env.status === EnvelopeStatus.DRAFT ? null : env.publicValidationCode,
       externalRef: env.externalRef,
       templateId: env.templateId,
+      origin: env.createdByApiKeyId ? 'integration' : 'manual',
       expiresAt: env.expiresAt,
       reminderIntervalHours: env.reminderIntervalHours,
       createdAt: env.createdAt,
@@ -821,6 +831,7 @@ export class EnvelopesService {
         email: s.email,
         phone: s.phone,
         cpf: maskCpf(s.cpfLast2),
+        hasCpf: !!s.cpfHash,
         role: s.role,
         signingGroup: s.signingGroup,
         roleKey: s.roleKey,

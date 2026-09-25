@@ -495,6 +495,8 @@ model Signer {
   // CPF cifrado (AES-256-GCM) + 2 últimos dígitos para exibição mascarada.
   cpfEncrypted    String?      @map("cpf_encrypted")
   cpfLast2        String?      @map("cpf_last2")
+  // Índice cego (HMAC com pepper) do CPF normalizado: permite buscar contratos por CPF sem decifrar.
+  cpfHash         String?      @map("cpf_hash")
   role            SignerRole   @default(SIGNER)
   signingGroup    Int          @default(1) @map("signing_group")
   status          SignerStatus @default(PENDING)
@@ -526,6 +528,7 @@ model Signer {
 
   @@unique([envelopeId, email])
   @@index([organizationId])
+  @@index([organizationId, cpfHash])
   @@index([envelopeId, signingGroup])
   @@index([email])
   @@map("signers")

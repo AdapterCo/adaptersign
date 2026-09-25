@@ -254,6 +254,43 @@ export class ListEnvelopesQuery extends PaginationQueryDto {
   @MaxLength(200)
   search?: string;
 
+  @ApiPropertyOptional({ enum: ['integration', 'manual'], description: 'integration = criado por API key' })
+  @IsOptional()
+  @IsIn(['integration', 'manual'])
+  origin?: 'integration' | 'manual';
+
+  @ApiPropertyOptional({ example: '529.982.247-25', description: 'Contratos com signatário deste CPF' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  cpf?: string;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Contratos com o mesmo CPF deste signatário' })
+  @IsOptional()
+  @IsUUID()
+  sameCpfAs?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  templateId?: string;
+
+  @ApiPropertyOptional({ example: 'usuario-17', description: 'Id do representante (vendedor) no sistema de origem' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  representative?: string;
+
+  @ApiPropertyOptional({ format: 'date-time', description: 'Criados a partir de' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ format: 'date-time', description: 'Criados até' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
   @ApiPropertyOptional({ example: 'venda-123', description: 'Referência no sistema de origem (ex.: número do contrato)' })
   @IsOptional()
   @IsString()

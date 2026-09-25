@@ -369,6 +369,19 @@ describe('Fluxo completo de assinatura (E2E)', () => {
     const detail = await api().get(`/api/v1/envelopes/${created.body.id}`).set(bearer).expect(200);
     expect(detail.body.signers.find((x: { id: string }) => x.id === loja.id)).toMatchObject({ authMethod: 'INTEGRATION', externalId: 'u-17' });
 
+    // Consultas: por CPF (índice cego), mesmo CPF de um signatário, origem e vendedor.
+    const byCpf = await api().get('/api/v1/envelopes?cpf=52998224725').set(bearer).expect(200);
+    expect(byCpf.body.data.map((e: { id: string }) => e.id)).toContain(created.body.id);
+    const sameCpf = await api().get(`/api/v1/envelopes?sameCpfAs=${cliente.id}`).set(bearer).expect(200);
+    expect(sameCpf.body.data.map((e: { id: string }) => e.id)).toContain(created.body.id);
+    const noCpf = await api().get('/api/v1/envelopes?cpf=11144477735').set(bearer).expect(200);
+    expect(noCpf.body.data.map((e: { id: string }) => e.id)).not.toContain(created.body.id);
+    const integ = await api().get(`/api/v1/envelopes?origin=integration&representative=u-17&externalRef=venda-${run}`).set(bearer).expect(200);
+    expect(integ.body.data).toHaveLength(1);
+    expect(integ.body.data[0]).toMatchObject({ origin: 'integration', template: { name: 'Contrato de moto' } });
+    const manual = await api().get(`/api/v1/envelopes?origin=manual&externalRef=venda-${run}`).set(bearer).expect(200);
+    expect(manual.body.data).toHaveLength(0);
+
     // Novo link para o cliente; nunca para a empresa.
     const link = await api().post(`/api/v1/envelopes/${created.body.id}/signers/${cliente.id}/link`).set(bearer).expect(200);
     expect(link.body.signingUrl).toMatch(/\/sign\//);
