@@ -14,6 +14,8 @@
 | OTP | 6 dígitos (CSPRNG), 10 min, 5 tentativas, cooldown 60 s, rate limit por IP e por signatário, uso único, nunca logado; viaja ao worker cifrado |
 | Rate limiting | Redis (janela fixa atômica): login, cadastro, reset, OTP, assinatura, validação, upload, API key, usuário |
 | Upload | extensão + Content-Type + magic bytes + estrutura (pdf-lib) + tamanho; PDFs cifrados recusados; ponto de integração para antivírus |
+| Assinatura da empresa pela integração | só com autorização vigente do OWNER (texto versionado, revogável); só para papéis da empresa criados pela integração (`authMethod INTEGRATION`, nunca selecionável manualmente); evidência registra empresa, representante, chave de API e autorização; esses signatários nunca recebem convite nem link |
+| Links pela API | o link individual só aparece na resposta (nunca armazenado em claro; apenas o hash do token); cada emissão é auditada |
 | Leitura de texto (âncoras) | pdf.js com `isEvalSupported: false`, sem fontes do sistema/FontFace, limite de 300 páginas; PDF tratado como conteúdo não confiável |
 | Integridade | SHA-256 do original; objetos imutáveis (`If-None-Match`); versões imutáveis (trigger); recálculo na finalização e na validação |
 | Auditoria | append-only (trigger), encadeamento SHA-256 com serialização canônica, horário do servidor (UTC) |

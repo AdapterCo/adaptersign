@@ -44,8 +44,9 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | GET | `/documents/:id` | Detalhe com versões e envelopes |
 | POST | `/documents/:id/versions` | Nova versão (novo hash e novo ID; a anterior é preservada) |
 | GET | `/documents/:id/versions/:versionId/content?mode=view\|download` | Conteúdo (download é auditado) |
-| POST | `/envelopes` | Cria rascunho (opcional: `documents[]`, `signers[]`) |
-| GET | `/envelopes` | Lista (busca por título, código, signatário ou documento; `status`) |
+| POST | `/envelopes` | Cria rascunho (opcional: `documents[]`, `signers[]`, `externalRef`) |
+| POST | `/envelopes/from-template` (multipart `file` + `data`) | Contrato completo a partir de um modelo — ver "Contratos por integração" |
+| GET | `/envelopes` | Lista (busca por título, código, referência, signatário ou documento; `status`; `externalRef`) |
 | GET | `/envelopes/auth-methods` | Métodos de autenticação (indisponíveis vêm marcados) |
 | GET/PATCH | `/envelopes/:id` | Detalhe / edição de rascunho |
 | POST/DELETE | `/envelopes/:id/documents[/:envelopeDocumentId]` | Documentos do rascunho |
@@ -58,6 +59,8 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | POST | `/envelopes/:id/activate` `{ "confirm": true }` | Envia para assinatura (documentos e campos passam a ser imutáveis) |
 | POST | `/envelopes/:id/cancel` `{ "reason"? }` | Cancela (histórico preservado) |
 | POST | `/envelopes/:id/remind` `{ "signerId"? }` | Lembrete manual (no máximo 1 por hora por signatário) |
+| POST | `/envelopes/:id/signers/:signerId/link` | Novo link individual de assinatura (ex.: para enviar por WhatsApp) |
+| GET/POST/DELETE | `/organizations/current/company-signature` | Autorização da assinatura da empresa pela integração (POST/DELETE: somente OWNER, via sessão) |
 | GET | `/envelopes/:id/timeline` | Eventos e verificação da cadeia |
 | GET | `/envelopes/:id/documents/:envelopeDocumentId/final` | PDF final (após `COMPLETED`) |
 | GET | `/envelopes/:id/evidence` | Relatório de evidências (após `COMPLETED`) |
@@ -103,6 +106,42 @@ marcadores de texto — onde os campos devem aparecer:
   malformada, responde `422 TEMPLATE_ANCHORS_MISMATCH` (com `missing_signature`, `unknown_roles` e `invalid`
   em `details`) **sem alterar nada**.
 
+## Contratos por integração
+
+Guia completo para o sistema de origem: [`integracao-sistema-vendas.md`](integracao-sistema-vendas.md).
+
+`POST /envelopes/from-template` (multipart) recebe o PDF (`file`, com as âncoras) e os dados (`data`, JSON):
+
+```json
+{
+  "template": "contrato-moto",
+  "externalRef": "venda-123",
+  "title": "Contrato de venda #123 — Maria da Silva",
+  "message": "opcional",
+  "expiresAt": "2026-10-10T23:59:00Z",
+  "representing": "opcional — padrão: nome da organização",
+  "signers": [
+    { "role": "loja", "name": "Carlos Vendedor", "email": "carlos@loja.com", "externalId": "usuario-17" },
+    { "role": "cliente", "name": "Maria da Silva", "email": "maria@exemplo.com", "cpf": "529.982.247-25", "phone": "+5524999999999" }
+  ]
+}
+```
+
+Numa chamada: confere as âncoras (antes de armazenar qualquer coisa), cria documento e envelope, ativa,
+registra a assinatura dos papéis da **empresa** (`isCompany` no modelo) em nome do representante informado e
+devolve o link de assinatura de quem assina em seguida (`signers[].signingUrl`, exibido **somente** nesta
+resposta). O cliente também recebe o convite por e-mail.
+
+- **Idempotência por `externalRef`**: reenviar um contrato cuja referência já tem envelope (não cancelado,
+  expirado ou recusado) devolve o mesmo envelope com `replayed: true` — nada é duplicado; etapas pendentes são
+  retomadas e um novo link é emitido. Envios simultâneos da mesma referência recebem `409 CONTRACT_IN_PROGRESS`.
+- A assinatura da empresa exige a **autorização** vigente (Configurações → Assinatura da empresa), dada por um
+  OWNER; sem ela: `422 COMPANY_SIGNATURE_NOT_AUTHORIZED`. Na evidência consta a empresa representada, o
+  representante (nome, e-mail, `externalId`), a chave de API que registrou e a autorização (texto versionado).
+- Em modelos sequenciais os papéis da empresa devem vir antes dos demais (`422 TEMPLATE_ORDER_UNSUPPORTED`).
+- Outros erros: `404 TEMPLATE_NOT_FOUND`, `400 VALIDATION_ERROR` (papéis faltando/sobrando, dados inválidos),
+  `422 TEMPLATE_ANCHORS_MISMATCH`, `402 PLAN_LIMIT_REACHED`.
+
 ## Webhooks
 
 Configurados em Configurações → Webhooks (OWNER). O plano precisa incluir webhooks. Eventos disponíveis:
@@ -128,7 +167,8 @@ Configurados em Configurações → Webhooks (OWNER). O plano precisa incluir we
   "organization_id": "…",
   "data": {
     "envelope": { "id": "…", "title": "…", "status": "COMPLETED", "validation_code": "ADP-8F7K-29QM-X82P",
-                  "completed_at": "…", "expires_at": null },
+                  "completed_at": "…", "expires_at": null, "external_ref": "venda-123",
+                  "documents": [{ "id": "…", "filename": "contrato.pdf", "final_available": true }] },
     "signer": null,
     "document_id": null
   }

@@ -30,6 +30,7 @@ Integrações usam o mesmo host (`https://sign.adapterco.com.br/api/v1`) com API
 | documents | upload validado, SHA-256, versões imutáveis, download |
 | envelopes | state machine, rascunho, documentos, signatários, campos posicionados, ativação, cancelamento, lembretes, expiração |
 | templates | modelos de contrato (papéis) e posicionamento automático de campos por âncoras `[[AS:tipo:papel]]` no PDF (pdf.js) |
+| integrations | contrato por modelo em uma chamada (`/envelopes/from-template`), assinatura da empresa pela integração autorizada, links de assinatura |
 | signing | fluxo público do signatário, OTP, `SignatureEngine`, registro de métodos de autenticação |
 | evidence | documento final, relatório de evidências, finalização atômica |
 | audit | eventos append-only encadeados |
