@@ -62,8 +62,14 @@ export default function EnvelopeDetailPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {env.status === 'DRAFT' && (
-              <Link href={`/envelopes/new?draft=${env.id}`} className="inline-flex min-h-11 items-center rounded-lg bg-brand px-4 text-sm font-semibold text-white">
+              <Link href={`/envelopes/new?draft=${env.id}`} className="inline-flex min-h-11 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink">
                 {t.envelopes.continueDraft}
+              </Link>
+            )}
+            {(env.status === 'DRAFT' || env.fields.length > 0) && (
+              <Link href={`/envelopes/${env.id}/fields`} className="inline-flex min-h-11 items-center rounded-lg bg-brand px-4 text-sm font-semibold text-white">
+                {t.fields.open}
+                {env.fields.length > 0 && ` (${env.fields.length})`}
               </Link>
             )}
             {signable && !env.finalizing && can('envelope:write') && (

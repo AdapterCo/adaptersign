@@ -154,12 +154,12 @@ function Wizard() {
     return draftId;
   }
 
-  async function saveDraft() {
+  async function saveDraft(next: 'detail' | 'fields' = 'detail') {
     setBusy(true);
     setError(null);
     try {
       const id = await persist();
-      router.push(`/envelopes/${id}`);
+      router.push(next === 'fields' ? `/envelopes/${id}/fields` : `/envelopes/${id}`);
     } catch (err) {
       setError(err);
     } finally {
@@ -390,7 +390,12 @@ function Wizard() {
               {t.common.back}
             </Button>
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" loading={busy} onClick={saveDraft} disabled={!title.trim()}>
+              {step >= 6 && (
+                <Button variant="secondary" loading={busy} onClick={() => void saveDraft('fields')} disabled={!title.trim()}>
+                  {t.fields.open}
+                </Button>
+              )}
+              <Button variant="secondary" loading={busy} onClick={() => void saveDraft()} disabled={!title.trim()}>
                 {t.wizard.saveDraft}
               </Button>
               {step < 7 ? (

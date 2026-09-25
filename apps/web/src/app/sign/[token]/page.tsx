@@ -13,7 +13,15 @@ import { Alert, Button, Card, ErrorMessage, Field, Input, Spinner, Textarea } fr
 interface SignState {
   envelope: { title: string; message: string | null; status: string; organizationName: string; expiresAt: string | null; validationCode: string; finalizing: boolean };
   signer: { name: string; email: string; status: string; authenticated: boolean; requiresOtp: boolean; canSign: boolean; signedAt: string | null; authMethodLabel: string };
-  documents: Array<{ id: string; filename: string; pageCount: number; sha256: string; finalAvailable: boolean; finalSha256: string | null }>;
+  documents: Array<{
+    id: string;
+    filename: string;
+    pageCount: number;
+    sha256: string;
+    finalAvailable: boolean;
+    finalSha256: string | null;
+    fields: Array<{ type: string; page: number; x: number; y: number; width: number; height: number }>;
+  }>;
   consent: { version: string; text: string };
 }
 
@@ -232,7 +240,24 @@ export default function SignPage() {
               }
             >
               <p className="mb-2 text-sm font-medium break-all">{doc.filename}</p>
-              <PdfViewer path={`/sign/documents/${doc.id}/content?mode=view`} title={doc.filename} />
+              {doc.fields.length > 0 && <p className="mb-2 text-xs text-brand">{t.fields.yourFields}</p>}
+              <PdfViewer
+                path={`/sign/documents/${doc.id}/content?mode=view`}
+                title={doc.filename}
+                overlay={(page) =>
+                  doc.fields
+                    .filter((f) => f.page === page)
+                    .map((f, i) => (
+                      <div
+                        key={i}
+                        className="absolute flex items-center justify-center rounded-sm border-2 border-dashed border-brand bg-brand/15 text-[10px] font-semibold text-brand"
+                        style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.width * 100}%`, height: `${f.height * 100}%` }}
+                      >
+                        <span className="truncate px-1">{t.fields.types[f.type] ?? f.type}</span>
+                      </div>
+                    ))
+                }
+              />
               <p className="mt-2 text-xs break-all text-muted">
                 {t.sign.hashNote} <span className="font-mono">{doc.sha256}</span>
               </p>

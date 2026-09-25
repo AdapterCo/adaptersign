@@ -26,6 +26,7 @@ export interface EnvelopeDetail {
   documents: Array<{
     id: string;
     documentId: string;
+    versionId: string;
     filename: string;
     pageCount: number;
     originalSha256: string;
@@ -46,5 +47,21 @@ export interface EnvelopeDetail {
     signedAt: string | null;
     declineReason: string | null;
   }>;
+  fields: EnvelopeField[];
   evidenceReport: { sha256: string; generatedAt: string } | null;
+}
+
+export type FieldType = 'SIGNATURE' | 'INITIALS' | 'NAME' | 'DATE';
+
+/** Coordenadas normalizadas (0..1), origem no canto superior esquerdo da página exibida. */
+export interface EnvelopeField {
+  id?: string;
+  envelopeDocumentId: string;
+  signerId: string;
+  type: FieldType;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }

@@ -136,7 +136,7 @@ export class SigningService {
   }
 
   async state({ session, signer, envelope }: ResolvedSession) {
-    const [org, docs, consent, signers] = await Promise.all([
+    const [org, docs, consent, signers, myFields] = await Promise.all([
       this.prisma.organization.findUniqueOrThrow({ where: { id: envelope.organizationId }, select: { name: true } }),
       this.prisma.envelopeDocument.findMany({
         where: { envelopeId: envelope.id },
@@ -145,6 +145,11 @@ export class SigningService {
       }),
       this.legal.currentSignatureConsent(),
       this.prisma.signer.findMany({ where: { envelopeId: envelope.id }, select: { signingGroup: true, status: true, required: true } }),
+      this.prisma.envelopeField.findMany({
+        where: { envelopeId: envelope.id, signerId: signer.id },
+        select: { envelopeDocumentId: true, type: true, page: true, x: true, y: true, width: true, height: true },
+        orderBy: [{ page: 'asc' }, { y: 'asc' }],
+      }),
     ]);
     const completed = envelope.status === EnvelopeStatus.COMPLETED;
     return {
@@ -181,6 +186,10 @@ export class SigningService {
         sha256: d.originalSha256,
         finalAvailable: completed && !!d.finalStorageKey,
         finalSha256: completed ? d.finalSha256 : null,
+        // Onde ESTE signatário vai assinar (destacado na visualização).
+        fields: myFields
+          .filter((f) => f.envelopeDocumentId === d.id)
+          .map((f) => ({ type: f.type, page: f.page, x: f.x, y: f.y, width: f.width, height: f.height })),
       })),
       consent: { version: consent.version, text: consent.content },
     };
