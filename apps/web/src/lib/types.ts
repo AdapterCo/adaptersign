@@ -23,6 +23,8 @@ export interface EnvelopeDetail {
   completedAt: string | null;
   cancelReason: string | null;
   finalizing: boolean;
+  externalRef: string | null;
+  templateId: string | null;
   documents: Array<{
     id: string;
     documentId: string;
@@ -40,6 +42,9 @@ export interface EnvelopeDetail {
     cpf: string | null;
     role: string;
     signingGroup: number;
+    roleKey: string | null;
+    representing: string | null;
+    externalId: string | null;
     status: string;
     required: boolean;
     authMethod: string;

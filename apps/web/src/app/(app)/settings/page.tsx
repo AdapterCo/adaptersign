@@ -8,7 +8,94 @@ import { useApi } from '@/lib/use-api';
 import { useSession } from '@/components/session';
 import { Alert, Button, Card, ErrorMessage, Field, Input, PageHeader, Select, Spinner } from '@/components/ui';
 
-type Tab = 'organization' | 'members' | 'apiKeys' | 'webhooks' | 'security';
+type Tab = 'organization' | 'members' | 'apiKeys' | 'webhooks' | 'companySignature' | 'security';
+
+interface CompanySignatureStatus {
+  authorized: boolean;
+  authorizedAt: string | null;
+  authorizedBy: string | null;
+  acceptedVersion: string | null;
+  text: { version: string; content: string; sha256: string };
+}
+
+function CompanySignatureTab() {
+  const { can } = useSession();
+  const owner = can('org:settings');
+  const { data, setData } = useApi<CompanySignatureStatus>('/organizations/current/company-signature');
+  const [accepted, setAccepted] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const { busy, error, run } = useAction();
+  if (!data) return <Spinner label={t.common.loading} />;
+  return (
+    <Card title={t.companySignature.title}>
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-muted">{t.companySignature.intro}</p>
+        {data.authorized ? (
+          <Alert tone="ok">{t.companySignature.authorized(data.authorizedBy ?? '—', data.authorizedAt ? formatDateTime(data.authorizedAt) : '—')}</Alert>
+        ) : (
+          <Alert tone="warn">{t.companySignature.notAuthorized}</Alert>
+        )}
+        <blockquote className="rounded-lg border border-line bg-canvas p-4 text-sm leading-relaxed">
+          {data.text.content}
+          <span className="mt-2 block text-xs text-muted">{t.companySignature.version(data.text.version)}</span>
+        </blockquote>
+        {!owner && <p className="text-xs text-muted">{t.companySignature.ownerOnly}</p>}
+        {owner && !data.authorized && (
+          <>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
+              <span>{t.companySignature.accept}</span>
+            </label>
+            <div>
+              <Button
+                loading={busy}
+                disabled={!accepted}
+                onClick={() =>
+                  void run(async () => {
+                    setData(await api<CompanySignatureStatus>('/organizations/current/company-signature', { method: 'POST', body: { accept: true, version: data.text.version } }));
+                    setAccepted(false);
+                  })
+                }
+              >
+                {t.companySignature.authorize}
+              </Button>
+            </div>
+          </>
+        )}
+        {owner && data.authorized && !confirmRevoke && (
+          <div>
+            <Button variant="danger" onClick={() => setConfirmRevoke(true)}>
+              {t.companySignature.revoke}
+            </Button>
+          </div>
+        )}
+        {owner && data.authorized && confirmRevoke && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted">{t.companySignature.revokeConfirm}</p>
+            <div className="flex gap-2">
+              <Button
+                variant="danger"
+                loading={busy}
+                onClick={() =>
+                  void run(async () => {
+                    setData(await api<CompanySignatureStatus>('/organizations/current/company-signature', { method: 'DELETE' }));
+                    setConfirmRevoke(false);
+                  })
+                }
+              >
+                {t.common.confirm}
+              </Button>
+              <Button variant="secondary" onClick={() => setConfirmRevoke(false)}>
+                {t.common.cancel}
+              </Button>
+            </div>
+          </div>
+        )}
+        <ErrorMessage error={error} />
+      </div>
+    </Card>
+  );
+}
 
 function useAction() {
   const [busy, setBusy] = useState(false);
@@ -370,6 +457,7 @@ export default function SettingsPage() {
     { id: 'members', label: t.settings.members, show: can('members:read') },
     { id: 'apiKeys', label: t.settings.apiKeys, show: can('api_keys:manage') },
     { id: 'webhooks', label: t.settings.webhooks, show: can('webhooks:manage') },
+    { id: 'companySignature', label: t.companySignature.tab, show: can('envelope:read') },
     { id: 'security', label: t.settings.security, show: true },
   ];
   const [tab, setTab] = useState<Tab>('organization');
@@ -395,6 +483,7 @@ export default function SettingsPage() {
       {tab === 'members' && <MembersTab />}
       {tab === 'apiKeys' && <ApiKeysTab />}
       {tab === 'webhooks' && <WebhooksTab />}
+      {tab === 'companySignature' && <CompanySignatureTab />}
       {tab === 'security' && <SecurityTab />}
     </>
   );

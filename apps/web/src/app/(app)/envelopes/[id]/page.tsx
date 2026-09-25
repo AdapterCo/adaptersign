@@ -87,6 +87,11 @@ export default function EnvelopeDetailPage() {
       />
       <div className="mb-6 flex flex-wrap items-center gap-3 text-sm text-muted">
         <StatusBadge status={env.status} />
+        {env.externalRef && (
+          <span>
+            {t.envelopes.externalRef}: <strong className="font-mono text-ink">{env.externalRef}</strong>
+          </span>
+        )}
         {env.validationCode && (
           <span>
             {t.envelopes.validationCode}: <strong className="font-mono text-ink">{env.validationCode}</strong>
@@ -185,6 +190,12 @@ export default function EnvelopeDetailPage() {
                       {s.email}
                       {s.cpf && ` · ${s.cpf}`}
                     </p>
+                    {s.representing && (
+                      <p className="text-xs text-muted">
+                        {t.envelopes.representing(s.representing)}
+                        {s.externalId && ` · ${t.envelopes.externalId(s.externalId)}`}
+                      </p>
+                    )}
                     <p className="text-xs text-muted">
                       {env.signingMode === 'SEQUENTIAL' && `${t.envelopes.group(s.signingGroup)} · `}
                       {s.authMethodLabel}
