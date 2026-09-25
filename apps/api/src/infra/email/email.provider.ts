@@ -36,6 +36,8 @@ export class SmtpEmailProvider implements EmailProvider {
       host: config.SMTP_HOST,
       port: config.SMTP_PORT,
       secure: config.SMTP_SECURE,
+      // Porta 587 (SMTP_SECURE=false): em produção exige STARTTLS — nunca envia credenciais sem TLS.
+      requireTLS: config.NODE_ENV === 'production' && !config.SMTP_SECURE,
       auth: config.SMTP_USER ? { user: config.SMTP_USER, pass: config.SMTP_PASSWORD ?? '' } : undefined,
     });
   }
