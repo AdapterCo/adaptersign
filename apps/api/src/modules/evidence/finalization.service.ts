@@ -58,6 +58,7 @@ export class FinalizationService {
       include: {
         organization: { select: { name: true } },
         documents: { orderBy: { position: 'asc' }, include: { documentVersion: true } },
+        fields: true,
         signers: { orderBy: [{ signingGroup: 'asc' }, { createdAt: 'asc' }], include: { signature: { include: { consent: { include: { legalTextVersion: true } } } } } },
       },
     });
@@ -104,6 +105,9 @@ export class FinalizationService {
             method: s.signature!.method,
             typedName: s.signature!.typedName,
             image: s.signature!.assetStorageKey ? await this.loadAsset(s.signature!.assetStorageKey, s.signature!.assetSha256) : null,
+            fields: env.fields
+              .filter((f) => f.signerId === s.id && f.envelopeDocumentId === d.id)
+              .map((f) => ({ type: f.type, page: f.page, x: f.x, y: f.y, width: f.width, height: f.height })),
           })),
         );
         const bytes = Buffer.from(

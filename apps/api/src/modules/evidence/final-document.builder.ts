@@ -1,7 +1,13 @@
-import { PDFDocument } from 'pdf-lib';
+import { degrees, PDFDocument, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { toWinAnsiSafe } from '../../common/util/text';
 import type { Branding } from '../../config/branding';
 import { Colors, hexToRgb, PdfWriter } from './pdf-writer';
+import { placeField, type FieldRect } from './field-geometry';
+
+export interface PositionedField extends FieldRect {
+  type: 'SIGNATURE' | 'INITIALS' | 'NAME' | 'DATE';
+  page: number; // 1-based
+}
 
 export interface FinalDocumentData {
   brand: Branding;
@@ -19,7 +25,78 @@ export interface FinalDocumentData {
     method: 'TYPED' | 'DRAWN';
     typedName: string | null;
     image: Buffer | null;
+    /** Campos posicionados deste signatário NESTE documento (opcional). */
+    fields?: PositionedField[];
   }>;
+}
+
+/** Maior tamanho de fonte (≤ max) em que o texto cabe na caixa. */
+function fitFontSize(font: PDFFont, text: string, maxWidth: number, maxHeight: number, max: number): number {
+  let size = Math.min(max, maxHeight * 0.75);
+  while (size > 4 && font.widthOfTextAtSize(text, size) > maxWidth) size -= 0.5;
+  return Math.max(size, 4);
+}
+
+function initialsOf(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter((p) => p.length > 2 || /^[A-ZÀ-Ý]/.test(p))
+    .map((p) => p[0]!.toUpperCase())
+    .join('')
+    .slice(0, 4);
+}
+
+interface DrawCtx {
+  font: PDFFont;
+  italic: PDFFont;
+  tz: string;
+}
+
+/** Desenha um campo na página original usando a geometria (CropBox + rotação). */
+function drawField(
+  page: PDFPage,
+  field: PositionedField,
+  signer: FinalDocumentData['signers'][number],
+  image: PDFImage | null,
+  ctx: DrawCtx,
+): void {
+  const p = placeField(page.getCropBox(), page.getRotation().angle, field);
+  const W = p.contentWidth;
+  const H = p.contentHeight;
+  const rotate = degrees(p.rotate);
+  const pad = Math.min(2, W * 0.05, H * 0.05);
+
+  const drawTextFitted = (raw: string, font: PDFFont, max: number) => {
+    const text = toWinAnsiSafe(raw);
+    const size = fitFontSize(font, text, W - pad * 2, H - pad * 2, max);
+    const pos = p.toPage(pad, (H - size) / 2 + size * 0.22);
+    page.drawText(text, { x: pos.x, y: pos.y, size, font, color: Colors.text, rotate });
+  };
+
+  const useImage = (field.type === 'SIGNATURE' || field.type === 'INITIALS') && image;
+  if (useImage) {
+    const scale = Math.min((W - pad * 2) / image.width, (H - pad * 2) / image.height);
+    const iw = image.width * scale;
+    const ih = image.height * scale;
+    const pos = p.toPage((W - iw) / 2, (H - ih) / 2);
+    page.drawImage(image, { x: pos.x, y: pos.y, width: iw, height: ih, rotate });
+    return;
+  }
+  switch (field.type) {
+    case 'SIGNATURE':
+      drawTextFitted(signer.typedName ?? signer.name, ctx.italic, 22);
+      return;
+    case 'INITIALS':
+      drawTextFitted(initialsOf(signer.typedName ?? signer.name), ctx.italic, 18);
+      return;
+    case 'NAME':
+      drawTextFitted(signer.name, ctx.font, 11);
+      return;
+    case 'DATE':
+      drawTextFitted(new Intl.DateTimeFormat('pt-BR', { timeZone: ctx.tz, dateStyle: 'short' }).format(signer.signedAt), ctx.font, 11);
+      return;
+  }
 }
 
 const ROLE_LABEL: Record<string, string> = { SIGNER: 'Signatário', APPROVER: 'Aprovador', WITNESS: 'Testemunha' };
@@ -43,6 +120,21 @@ export async function buildFinalDocument(original: Buffer, data: FinalDocumentDa
     const size = 6.5;
     const textWidth = w.font.widthOfTextAtSize(stamp, size);
     page.drawText(stamp, { x: Math.max(10, (width - textWidth) / 2), y: 8, size, font: w.font, color: Colors.muted });
+  }
+
+  // Campos posicionados: desenhados nas páginas ORIGINAIS, na posição definida no envelope.
+  const images = new Map<number, PDFImage>();
+  for (const [i, s] of data.signers.entries()) {
+    if (!s.fields?.length) continue;
+    let image: PDFImage | null = null;
+    if (s.method === 'DRAWN' && s.image) {
+      image = images.get(i) ?? (await doc.embedPng(s.image));
+      images.set(i, image);
+    }
+    for (const f of s.fields) {
+      if (f.page < 1 || f.page > originalPageCount) continue;
+      drawField(doc.getPage(f.page - 1), f, s, image, { font: w.font, italic: w.italic, tz });
+    }
   }
 
   w.text(data.brand.name, { size: 12, font: w.bold, color: brandColor, gap: 6 });
