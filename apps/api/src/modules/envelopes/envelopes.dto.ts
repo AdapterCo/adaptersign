@@ -10,6 +10,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -20,7 +21,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { AuthMethod, EnvelopeStatus, SignerRole, SigningMode } from '../../generated/prisma/client';
+import { AuthMethod, EnvelopeStatus, FieldType, SignerRole, SigningMode } from '../../generated/prisma/client';
 import { PaginationQueryDto } from '../../common/util/pagination';
 
 export class SignerInputDto {
@@ -175,6 +176,63 @@ export class RemindDto {
   @IsOptional()
   @IsUUID()
   signerId?: string;
+}
+
+/**
+ * Campo posicionado. Coordenadas normalizadas (0..1) relativas à página como exibida
+ * (origem no canto superior esquerdo). Ex.: x=0.25 → 25% da largura a partir da esquerda.
+ */
+export class FieldInputDto {
+  @ApiProperty({ format: 'uuid', description: 'Documento do envelope (envelopeDocumentId)' })
+  @IsUUID()
+  envelopeDocumentId: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  signerId: string;
+
+  @ApiProperty({ enum: FieldType })
+  @IsEnum(FieldType)
+  type: FieldType;
+
+  @ApiProperty({ minimum: 1, description: 'Página (começa em 1)' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number;
+
+  @ApiProperty({ minimum: 0, maximum: 1 })
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  x: number;
+
+  @ApiProperty({ minimum: 0, maximum: 1 })
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  y: number;
+
+  @ApiProperty({ minimum: 0.005, maximum: 1 })
+  @IsNumber()
+  @Min(0.005)
+  @Max(1)
+  width: number;
+
+  @ApiProperty({ minimum: 0.005, maximum: 1 })
+  @IsNumber()
+  @Min(0.005)
+  @Max(1)
+  height: number;
+}
+
+export class SetFieldsDto {
+  @ApiProperty({ type: [FieldInputDto], description: 'Lista completa (substitui os campos atuais do rascunho)' })
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => FieldInputDto)
+  fields: FieldInputDto[];
 }
 
 export class ListEnvelopesQuery extends PaginationQueryDto {

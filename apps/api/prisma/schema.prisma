@@ -130,6 +130,14 @@ enum UsageMetric {
   API_REQUESTS
 }
 
+// Campos posicionados no PDF. TEXT/CHECKBOX (preenchidos pelo signatário) ficam para fase futura.
+enum FieldType {
+  SIGNATURE
+  INITIALS
+  NAME
+  DATE
+}
+
 enum IdempotencyStatus {
   IN_PROGRESS
   COMPLETED
@@ -322,6 +330,7 @@ model Envelope {
   organization   Organization       @relation(fields: [organizationId], references: [id])
   documents      EnvelopeDocument[]
   signers        Signer[]
+  fields         EnvelopeField[]
   evidenceReport EvidenceReport?
 
   @@index([organizationId, status])
@@ -344,6 +353,7 @@ model EnvelopeDocument {
 
   envelope        Envelope        @relation(fields: [envelopeId], references: [id])
   documentVersion DocumentVersion @relation(fields: [documentVersionId], references: [id])
+  fields          EnvelopeField[]
 
   @@unique([envelopeId, documentVersionId])
   @@unique([envelopeId, position])
@@ -351,6 +361,35 @@ model EnvelopeDocument {
   @@index([documentVersionId])
   @@index([finalSha256])
   @@map("envelope_documents")
+}
+
+// Campo posicionado (assinatura, rubrica, nome, data) de um signatário em uma página.
+// Coordenadas NORMALIZADAS (0..1) relativas à página VISÍVEL (CropBox já rotacionada, como exibida
+// ao usuário), origem no canto superior esquerdo. A conversão para o espaço do PDF é feita por
+// uma única função (field-geometry.ts) — nunca misturar coordenadas CSS e PDF.
+// Imutável após a ativação do envelope (trigger no banco).
+model EnvelopeField {
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  envelopeId         String    @map("envelope_id") @db.Uuid
+  envelopeDocumentId String    @map("envelope_document_id") @db.Uuid
+  signerId           String    @map("signer_id") @db.Uuid
+  type               FieldType
+  page               Int
+  x                  Float
+  y                  Float
+  width              Float
+  height             Float
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  envelope         Envelope         @relation(fields: [envelopeId], references: [id])
+  envelopeDocument EnvelopeDocument @relation(fields: [envelopeDocumentId], references: [id], onDelete: Cascade)
+  signer           Signer           @relation(fields: [signerId], references: [id], onDelete: Cascade)
+
+  @@index([envelopeId])
+  @@index([envelopeDocumentId])
+  @@index([signerId])
+  @@map("envelope_fields")
 }
 
 model Signer {
@@ -385,6 +424,7 @@ model Signer {
   challenges        AuthenticationChallenge[]
   consents          Consent[]
   signature         Signature?
+  fields            EnvelopeField[]
 
   @@unique([envelopeId, email])
   @@index([organizationId])

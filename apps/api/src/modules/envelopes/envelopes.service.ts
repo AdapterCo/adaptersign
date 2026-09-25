@@ -35,7 +35,22 @@ import type {
   ListEnvelopesQuery,
   SignerInputDto,
   UpdateEnvelopeDto,
+  SetFieldsDto,
 } from './envelopes.dto';
+
+export function serializeField(f: {
+  id: string;
+  envelopeDocumentId: string;
+  signerId: string;
+  type: string;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
+  return { id: f.id, envelopeDocumentId: f.envelopeDocumentId, signerId: f.signerId, type: f.type, page: f.page, x: f.x, y: f.y, width: f.width, height: f.height };
+}
 
 const MAX_DOCUMENTS = 20;
 const MAX_SIGNERS = 50;
@@ -304,6 +319,65 @@ export class EnvelopesService {
     return this.get(auth, envelopeId);
   }
 
+  // ───────────── Campos posicionados (rascunho) ─────────────
+
+  async listFields(auth: AuthContext, envelopeId: string) {
+    const env = await this.prisma.envelope.findFirst({ where: { id: envelopeId, organizationId: auth.organizationId }, select: { id: true } });
+    if (!env) throw Errors.notFound('ENVELOPE_NOT_FOUND', 'Envelope não encontrado.');
+    const rows = await this.prisma.envelopeField.findMany({
+      where: { envelopeId, organizationId: auth.organizationId },
+      orderBy: [{ page: 'asc' }, { y: 'asc' }],
+    });
+    return rows.map(serializeField);
+  }
+
+  /** Substitui todos os campos do rascunho (operação atômica). */
+  async setFields(auth: AuthContext, envelopeId: string, dto: SetFieldsDto, client: ClientInfo) {
+    await this.prisma.tx(async (tx) => {
+      const env = await this.lockEnvelope(tx, auth, envelopeId);
+      this.assertDraft(env.status);
+      const [docs, signers] = await Promise.all([
+        tx.envelopeDocument.findMany({ where: { envelopeId }, include: { documentVersion: { select: { pageCount: true } } } }),
+        tx.signer.findMany({ where: { envelopeId }, select: { id: true } }),
+      ]);
+      const pages = new Map(docs.map((d) => [d.id, d.documentVersion.pageCount]));
+      const signerIds = new Set(signers.map((s) => s.id));
+      for (const f of dto.fields) {
+        const pageCount = pages.get(f.envelopeDocumentId);
+        if (pageCount === undefined) throw Errors.validation('Campo aponta para documento que não está no envelope.');
+        if (!signerIds.has(f.signerId)) throw Errors.validation('Campo aponta para signatário que não está no envelope.');
+        if (f.page > pageCount) throw Errors.validation(`Página ${f.page} não existe no documento (${pageCount} páginas).`);
+        if (f.x + f.width > 1.000001 || f.y + f.height > 1.000001) throw Errors.validation('Campo ultrapassa os limites da página.');
+      }
+      await tx.envelopeField.deleteMany({ where: { envelopeId } });
+      if (dto.fields.length > 0) {
+        await tx.envelopeField.createMany({
+          data: dto.fields.map((f) => ({
+            organizationId: auth.organizationId,
+            envelopeId,
+            envelopeDocumentId: f.envelopeDocumentId,
+            signerId: f.signerId,
+            type: f.type,
+            page: f.page,
+            x: f.x,
+            y: f.y,
+            width: f.width,
+            height: f.height,
+          })),
+        });
+      }
+      await this.audit.record(tx, {
+        eventType: AuditEventType.ENVELOPE_FIELDS_UPDATED,
+        actor: actorOf(auth),
+        organizationId: auth.organizationId,
+        envelopeId,
+        ...client,
+        metadata: { count: dto.fields.length },
+      });
+    });
+    return this.listFields(auth, envelopeId);
+  }
+
   // ───────────── Ativação ─────────────
 
   async activate(auth: AuthContext, envelopeId: string, client: ClientInfo) {
@@ -320,6 +394,7 @@ export class EnvelopesService {
       if (env.expiresAt && env.expiresAt <= new Date()) throw Errors.validation('A data de expiração já passou. Atualize o prazo.');
       const docs = await tx.envelopeDocument.findMany({ where: { envelopeId }, include: { documentVersion: true } });
       const signers = await tx.signer.findMany({ where: { envelopeId } });
+      const fields = await tx.envelopeField.findMany({ where: { envelopeId }, orderBy: [{ page: 'asc' }, { y: 'asc' }] });
       if (docs.length === 0) throw Errors.unprocessable('ENVELOPE_WITHOUT_DOCUMENTS', 'Adicione ao menos um documento.');
       if (signers.length === 0) throw Errors.unprocessable('ENVELOPE_WITHOUT_SIGNERS', 'Adicione ao menos um signatário.');
       if (!signers.some((s) => s.required)) throw Errors.unprocessable('ENVELOPE_WITHOUT_REQUIRED_SIGNER', 'Ao menos um signatário deve ser obrigatório.');
@@ -344,6 +419,14 @@ export class EnvelopesService {
           signers: signers.map((s) => ({ signerId: s.id, role: s.role, signingGroup: s.signingGroup, authMethod: s.authMethod })),
           signingMode: env.signingMode,
           expiresAt: env.expiresAt,
+          // Posição exata de cada campo (evidência de onde cada signatário assina).
+          fields: fields.map((f) => ({
+            envelopeDocumentId: f.envelopeDocumentId,
+            signerId: f.signerId,
+            type: f.type,
+            page: f.page,
+            box: [f.x, f.y, f.width, f.height],
+          })),
         },
       });
       const toInvite = signersToInvite(signers, nextSigningGroup(signers));
@@ -520,6 +603,7 @@ export class EnvelopesService {
         documents: { orderBy: { position: 'asc' }, include: { documentVersion: true } },
         signers: { orderBy: [{ signingGroup: 'asc' }, { createdAt: 'asc' }], include: { signature: { select: { method: true, signedAt: true, authMethod: true } } } },
         evidenceReport: { select: { sha256: true, generatedAt: true, status: true } },
+        fields: { orderBy: [{ page: 'asc' }, { y: 'asc' }] },
       },
     });
     if (!env) throw Errors.notFound('ENVELOPE_NOT_FOUND', 'Envelope não encontrado.');
@@ -572,6 +656,7 @@ export class EnvelopesService {
         declineReason: s.declineReason,
         signatureMethod: s.signature?.method ?? null,
       })),
+      fields: env.fields.map(serializeField),
       evidenceReport: env.evidenceReport
         ? { sha256: env.evidenceReport.sha256, generatedAt: env.evidenceReport.generatedAt, status: env.evidenceReport.status }
         : null,

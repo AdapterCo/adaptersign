@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Req, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, Query, Req, StreamableFile } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CurrentAuth, RequirePermission } from '../../common/auth/decorators';
@@ -15,6 +15,7 @@ import {
   EnvelopeDocumentInputDto,
   ListEnvelopesQuery,
   RemindDto,
+  SetFieldsDto,
   SignerInputDto,
   UpdateEnvelopeDto,
 } from './envelopes.dto';
@@ -92,6 +93,20 @@ export class EnvelopesController {
     @Req() req: Request,
   ) {
     return this.envelopes.removeSigner(auth, id, signerId, clientInfo(req));
+  }
+
+  @RequirePermission(Permission.ENVELOPE_READ)
+  @Get(':id/fields')
+  @ApiOperation({ summary: 'Campos posicionados (coordenadas normalizadas 0..1, origem superior esquerda)' })
+  fields(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.envelopes.listFields(auth, id);
+  }
+
+  @RequirePermission(Permission.ENVELOPE_WRITE)
+  @Put(':id/fields')
+  @ApiOperation({ summary: 'Substitui os campos posicionados do rascunho' })
+  setFields(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetFieldsDto, @Req() req: Request) {
+    return this.envelopes.setFields(auth, id, dto, clientInfo(req));
   }
 
   @RequirePermission(Permission.ENVELOPE_WRITE)

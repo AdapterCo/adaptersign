@@ -2,7 +2,7 @@
  * Teste E2E do fluxo obrigatório (seção 70/108) + testes de segurança (seção 71).
  *
  * REQUER infraestrutura real: PostgreSQL (com migrations aplicadas), Redis, S3-compatible
- * (MinIO) e Mailpit — ex.: `docker compose --profile local up -d postgres redis minio minio-init mailpit`.
+ * (MinIO) e Mailpit — ex.: `docker compose up -d postgres redis minio minio-init mailpit`.
  * Variáveis: as mesmas do .env (NODE_ENV=test) + MAILPIT_URL (padrão http://localhost:8025).
  * Executar: npm run test:integration -w @adapter-sign/api
  */
