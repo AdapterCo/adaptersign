@@ -142,6 +142,28 @@ Regras:
 - Recomendado: versionamento e/ou object lock no bucket, credenciais restritas ao bucket e replicação para outra região.
 - A credencial da aplicação precisa de `s3:PutObject` com escrita condicional, `GetObject`, `DeleteObject` (usado só para limpar objetos órfãos de transações falhas) e `HeadBucket` (usado pelo `/ready`).
 
+## E-mail (SMTP)
+
+Sem SMTP real nada funciona de ponta a ponta: confirmação de e-mail, convites, códigos OTP e avisos
+dependem dele, e **envelopes só podem ser enviados por usuários com e-mail confirmado**. O Mailpit
+(`adaptersign-mailpit`) existe só em desenvolvimento; em produção configure um provedor:
+
+| Provedor | `SMTP_HOST` | `SMTP_PORT` / `SMTP_SECURE` | `SMTP_USER` / `SMTP_PASSWORD` |
+| --- | --- | --- | --- |
+| Resend | `smtp.resend.com` | `465` / `true` | `resend` / chave de API |
+| Amazon SES | `email-smtp.<região>.amazonaws.com` | `587` / `false` (STARTTLS) | credenciais SMTP do SES |
+| Servidor próprio / outro | conforme o provedor | `465`/`true` ou `587`/`false` | conforme o provedor |
+
+Confira os valores na documentação atual do provedor. O domínio de `EMAIL_FROM` (ex.: `adapterco.com.br`)
+precisa estar verificado no provedor (registros SPF/DKIM no DNS). Após alterar o `.env`, recrie a API e o worker:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+docker compose -p adaptersign logs --tail 50 adaptersign-worker | grep -iE 'email|smtp|error'
+```
+
+E-mails que falharam ficam registrados (status `FAILED`) e aparecem no painel da plataforma.
+
 ## Backup e restauração
 
 ```bash
