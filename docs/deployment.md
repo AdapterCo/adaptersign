@@ -19,9 +19,9 @@ npm run typecheck                # gera o Prisma Client e checa os tipos da API 
 npm test                         # testes unitários
 DATABASE_URL=postgresql://x:x@localhost:5432/x npm run build
 
-# E2E com infraestrutura real (perfil "local")
+# E2E com infraestrutura real (docker-compose.dev.yml: MinIO + Mailpit)
 cp .env.example .env             # ajuste para teste: NODE_ENV=test, URLs http://localhost, COOKIE_SECURE=false
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d adaptersign-postgres adaptersign-redis adaptersign-minio adaptersign-minio-init adaptersign-mailpit
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d adaptersign-postgres adaptersign-redis adaptersign-minio adaptersign-minio-init adaptersign-mailpit
 cd apps/api && npx prisma migrate deploy && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 MAILPIT_URL=http://localhost:8025 npm run test:integration
 ```
@@ -132,7 +132,7 @@ docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
 
 - **Cloudflare R2**: `STORAGE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`, `STORAGE_REGION=auto`, `STORAGE_FORCE_PATH_STYLE=false`.
 - **Amazon S3**: deixe `STORAGE_ENDPOINT` vazio, `STORAGE_REGION=<região>`, bloqueie todo acesso público do bucket.
-- **MinIO** (perfil `local`, só desenvolvimento): `http://adaptersign-minio:9000`, `STORAGE_FORCE_PATH_STYLE=true`. O serviço `adaptersign-minio-init` cria o bucket sem acesso anônimo.
+- **MinIO** (só desenvolvimento, via `docker-compose.dev.yml`): `http://adaptersign-minio:9000`, `STORAGE_FORCE_PATH_STYLE=true`. O serviço `adaptersign-minio-init` cria o bucket sem acesso anônimo.
   Observação: a distribuição de imagens da edição comunitária do MinIO mudou em 2025; confirme a disponibilidade da imagem ou use R2/S3.
 
 Regras:

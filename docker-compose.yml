@@ -10,7 +10,7 @@
 # Produção:
 #   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
 # Desenvolvimento / CI (portas em 127.0.0.1 + MinIO + Mailpit):
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile local up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 name: adaptersign
 
@@ -109,40 +109,9 @@ services:
     expose:
       - "3000"
 
-  # ───────── Somente desenvolvimento/homologação (profile "local") ─────────
-  adaptersign-minio:
-    profiles: ["local"]
-    image: minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    volumes:
-      - miniodata:/data
-
-  # Cria o bucket PRIVADO (sem acesso anônimo).
-  adaptersign-minio-init:
-    profiles: ["local"]
-    image: minio/mc:latest
-    depends_on:
-      - adaptersign-minio
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >
-        until mc alias set local http://adaptersign-minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done &&
-        mc mb --ignore-existing local/"$${STORAGE_BUCKET}" &&
-        mc anonymous set none local/"$${STORAGE_BUCKET}"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      STORAGE_BUCKET: ${STORAGE_BUCKET}
-    restart: "no"
-
-  adaptersign-mailpit:
-    profiles: ["local"]
-    image: axllent/mailpit:latest
+# Storage (R2/S3) e SMTP são serviços externos em produção. MinIO e Mailpit, usados só em
+# desenvolvimento e CI, ficam em docker-compose.dev.yml.
 
 volumes:
   pgdata:
   redisdata:
-  miniodata:
