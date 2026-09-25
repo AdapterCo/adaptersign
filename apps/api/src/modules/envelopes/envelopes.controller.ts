@@ -8,6 +8,7 @@ import { contentDisposition } from '../../common/http/content-disposition';
 import { Idempotent } from '../../common/idempotency/idempotency.interceptor';
 import { EnvelopesService } from './envelopes.service';
 import { listAuthMethods } from '../signing/auth-methods';
+import { ApplyTemplateDto } from '../templates/templates.dto';
 import {
   ActivateEnvelopeDto,
   CancelEnvelopeDto,
@@ -107,6 +108,14 @@ export class EnvelopesController {
   @ApiOperation({ summary: 'Substitui os campos posicionados do rascunho' })
   setFields(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetFieldsDto, @Req() req: Request) {
     return this.envelopes.setFields(auth, id, dto, clientInfo(req));
+  }
+
+  @RequirePermission(Permission.ENVELOPE_WRITE)
+  @HttpCode(200)
+  @Post(':id/fields/apply-template')
+  @ApiOperation({ summary: 'Posiciona os campos a partir das âncoras [[AS:tipo:papel]] dos PDFs, conforme o modelo' })
+  applyTemplate(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ApplyTemplateDto, @Req() req: Request) {
+    return this.envelopes.applyTemplate(auth, id, dto, clientInfo(req));
   }
 
   @RequirePermission(Permission.ENVELOPE_WRITE)

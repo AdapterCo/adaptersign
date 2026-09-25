@@ -138,6 +138,14 @@ enum FieldType {
   DATE
 }
 
+// Canto da página onde a rubrica "em todas as páginas" é desenhada (modelos).
+enum PageCorner {
+  BOTTOM_RIGHT
+  BOTTOM_LEFT
+  TOP_RIGHT
+  TOP_LEFT
+}
+
 enum IdempotencyStatus {
   IN_PROGRESS
   COMPLETED
@@ -184,6 +192,7 @@ model Organization {
   envelopes    Envelope[]
   apiKeys      ApiKey[]
   webhooks     WebhookEndpoint[]
+  templates    Template[]
   subscription Subscription?
 
   @@map("organizations")
@@ -390,6 +399,56 @@ model EnvelopeField {
   @@index([envelopeDocumentId])
   @@index([signerId])
   @@map("envelope_fields")
+}
+
+// ───────────────────────────── Modelos ─────────────────────────────
+
+// Modelo de contrato: define os papéis (ex.: "loja", "cliente") e como os campos são posicionados
+// automaticamente a partir de ÂNCORAS no PDF (texto "[[AS:<tipo>:<papel>]]" — ver templates/anchors.ts).
+// O modelo não guarda PDF: cada contrato é gerado pelo sistema de origem com as âncoras embutidas.
+model Template {
+  id             String      @id @default(uuid(7)) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  // Identificador estável usado por integrações (ex.: "contrato-moto"); único por organização.
+  key            String
+  name           String
+  description    String?
+  signingMode    SigningMode @default(SEQUENTIAL) @map("signing_mode")
+  createdById    String?     @map("created_by_id") @db.Uuid
+  archivedAt     DateTime?   @map("archived_at") @db.Timestamptz(3)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  roles        TemplateRole[]
+
+  @@unique([organizationId, key])
+  @@index([organizationId, archivedAt])
+  @@map("templates")
+}
+
+model TemplateRole {
+  id               String     @id @default(uuid(7)) @db.Uuid
+  organizationId   String     @map("organization_id") @db.Uuid
+  templateId       String     @map("template_id") @db.Uuid
+  // Nome do papel nas âncoras (ex.: "cliente" em [[AS:assinatura:cliente]]).
+  key              String
+  label            String
+  position         Int
+  // Ordem de assinatura (grupo) quando o modelo é sequencial.
+  signingGroup     Int        @default(1) @map("signing_group")
+  // Papel que representa a própria empresa (ex.: a loja).
+  isCompany        Boolean    @default(false) @map("is_company")
+  // Rubrica automática em todas as páginas, no canto indicado.
+  initialsAllPages Boolean    @default(false) @map("initials_all_pages")
+  initialsCorner   PageCorner @default(BOTTOM_RIGHT) @map("initials_corner")
+
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, key])
+  @@unique([templateId, position])
+  @@index([organizationId])
+  @@map("template_roles")
 }
 
 model Signer {

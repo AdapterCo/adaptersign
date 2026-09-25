@@ -13,6 +13,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { EnvelopesModule } from './modules/envelopes/envelopes.module';
+import { TemplatesModule } from './modules/templates/templates.module';
 import { SigningModule } from './modules/signing/signing.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
@@ -35,6 +36,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     AuthModule,
     OrganizationsModule,
     DocumentsModule,
+    TemplatesModule,
     EnvelopesModule,
     SigningModule,
     NotificationsModule,

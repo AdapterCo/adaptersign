@@ -28,6 +28,9 @@ import { DomainEvent } from '../outbox/domain-events';
 import { LimitsService } from '../billing/limits.service';
 import { UsageService } from '../billing/usage.service';
 import { assertAuthMethodAvailable, authMethodLabel } from '../signing/auth-methods';
+import { TemplatesService, isPlanValid } from '../templates/templates.service';
+import { planTemplateFields } from '../templates/anchors';
+import type { ApplyTemplateDto } from '../templates/templates.dto';
 import { assertEnvelopeTransition, nextSigningGroup, signersToInvite, SIGNABLE_ENVELOPE_STATUSES } from './envelope-state';
 import type {
   CreateEnvelopeDto,
@@ -36,6 +39,7 @@ import type {
   SignerInputDto,
   UpdateEnvelopeDto,
   SetFieldsDto,
+  FieldInputDto,
 } from './envelopes.dto';
 
 export function serializeField(f: {
@@ -54,6 +58,7 @@ export function serializeField(f: {
 
 const MAX_DOCUMENTS = 20;
 const MAX_SIGNERS = 50;
+const MAX_FIELDS = 200;
 
 @Injectable()
 export class EnvelopesService {
@@ -65,6 +70,7 @@ export class EnvelopesService {
     private readonly outbox: OutboxService,
     private readonly limits: LimitsService,
     private readonly usage: UsageService,
+    private readonly templates: TemplatesService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -333,49 +339,122 @@ export class EnvelopesService {
 
   /** Substitui todos os campos do rascunho (operação atômica). */
   async setFields(auth: AuthContext, envelopeId: string, dto: SetFieldsDto, client: ClientInfo) {
-    await this.prisma.tx(async (tx) => {
-      const env = await this.lockEnvelope(tx, auth, envelopeId);
-      this.assertDraft(env.status);
-      const [docs, signers] = await Promise.all([
-        tx.envelopeDocument.findMany({ where: { envelopeId }, include: { documentVersion: { select: { pageCount: true } } } }),
-        tx.signer.findMany({ where: { envelopeId }, select: { id: true } }),
-      ]);
-      const pages = new Map(docs.map((d) => [d.id, d.documentVersion.pageCount]));
-      const signerIds = new Set(signers.map((s) => s.id));
-      for (const f of dto.fields) {
-        const pageCount = pages.get(f.envelopeDocumentId);
-        if (pageCount === undefined) throw Errors.validation('Campo aponta para documento que não está no envelope.');
-        if (!signerIds.has(f.signerId)) throw Errors.validation('Campo aponta para signatário que não está no envelope.');
-        if (f.page > pageCount) throw Errors.validation(`Página ${f.page} não existe no documento (${pageCount} páginas).`);
-        if (f.x + f.width > 1.000001 || f.y + f.height > 1.000001) throw Errors.validation('Campo ultrapassa os limites da página.');
-      }
-      await tx.envelopeField.deleteMany({ where: { envelopeId } });
-      if (dto.fields.length > 0) {
-        await tx.envelopeField.createMany({
-          data: dto.fields.map((f) => ({
-            organizationId: auth.organizationId,
-            envelopeId,
-            envelopeDocumentId: f.envelopeDocumentId,
-            signerId: f.signerId,
-            type: f.type,
-            page: f.page,
-            x: f.x,
-            y: f.y,
-            width: f.width,
-            height: f.height,
-          })),
-        });
-      }
-      await this.audit.record(tx, {
-        eventType: AuditEventType.ENVELOPE_FIELDS_UPDATED,
-        actor: actorOf(auth),
-        organizationId: auth.organizationId,
-        envelopeId,
-        ...client,
-        metadata: { count: dto.fields.length },
-      });
-    });
+    await this.prisma.tx((tx) => this.replaceFieldsTx(tx, auth, envelopeId, dto.fields, client, { source: 'manual' }));
     return this.listFields(auth, envelopeId);
+  }
+
+  /**
+   * Posiciona os campos a partir das âncoras dos PDFs do rascunho, conforme o modelo.
+   * Recusa (sem alterar nada) se faltar assinatura de algum papel ou houver âncora inválida.
+   */
+  async applyTemplate(auth: AuthContext, envelopeId: string, dto: ApplyTemplateDto, client: ClientInfo) {
+    const env = await this.prisma.envelope.findFirst({
+      where: { id: envelopeId, organizationId: auth.organizationId },
+      include: {
+        documents: { orderBy: { position: 'asc' }, include: { documentVersion: { select: { storageKey: true } } } },
+        signers: { select: { id: true } },
+      },
+    });
+    if (!env) throw Errors.notFound('ENVELOPE_NOT_FOUND', 'Envelope não encontrado.');
+    this.assertDraft(env.status);
+    if (env.documents.length === 0) throw Errors.validation('Inclua ao menos um documento antes de aplicar o modelo.');
+    const template = await this.templates.findActive(auth, dto.templateId);
+
+    const signerIds = new Set(env.signers.map((s) => s.id));
+    const signerByRole = new Map<string, string>();
+    for (const a of dto.roles) {
+      if (signerByRole.has(a.roleKey)) throw Errors.validation(`Papel informado mais de uma vez: ${a.roleKey}.`);
+      if (!signerIds.has(a.signerId)) throw Errors.validation('Signatário não pertence ao envelope.');
+      signerByRole.set(a.roleKey, a.signerId);
+    }
+    const unassigned = template.roles.filter((r) => !signerByRole.has(r.key)).map((r) => r.key);
+    const extra = [...signerByRole.keys()].filter((k) => !template.roles.some((r) => r.key === k));
+    if (unassigned.length > 0 || extra.length > 0) {
+      throw Errors.validation('Associe exatamente um signatário a cada papel do modelo.', { unassigned, unknown: extra });
+    }
+
+    const pdfs = await Promise.all(
+      env.documents.map(async (d) => ({ ref: d.id, pdf: await this.storage.getBuffer(d.documentVersion.storageKey) })),
+    );
+    const plan = planTemplateFields(template.roles, await this.templates.scanDocuments(pdfs));
+    if (!isPlanValid(plan)) {
+      throw Errors.unprocessable('TEMPLATE_ANCHORS_MISMATCH', 'As âncoras dos documentos não conferem com o modelo.', {
+        missing_signature: plan.missingSignature,
+        unknown_roles: plan.unknownRoles,
+        invalid: plan.invalid.map((i) => ({ text: i.text, page: i.page, envelope_document_id: i.ref })),
+      });
+    }
+    if (plan.fields.length > MAX_FIELDS) throw Errors.validation(`O modelo geraria mais de ${MAX_FIELDS} campos.`);
+
+    const fields = plan.fields.map((f) => ({
+      envelopeDocumentId: f.ref,
+      signerId: signerByRole.get(f.role) as string,
+      type: f.type,
+      page: f.page,
+      x: f.x,
+      y: f.y,
+      width: f.width,
+      height: f.height,
+    }));
+    await this.prisma.tx((tx) =>
+      this.replaceFieldsTx(tx, auth, envelopeId, fields, client, {
+        source: 'template',
+        templateId: template.id,
+        templateKey: template.key,
+        anchors: plan.anchors.length,
+      }),
+    );
+    return { fields: await this.listFields(auth, envelopeId), anchors: plan.anchors.length };
+  }
+
+  private async replaceFieldsTx(
+    tx: Tx,
+    auth: AuthContext,
+    envelopeId: string,
+    fields: FieldInputDto[],
+    client: ClientInfo,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    const env = await this.lockEnvelope(tx, auth, envelopeId);
+    this.assertDraft(env.status);
+    const [docs, signers] = await Promise.all([
+      tx.envelopeDocument.findMany({ where: { envelopeId }, include: { documentVersion: { select: { pageCount: true } } } }),
+      tx.signer.findMany({ where: { envelopeId }, select: { id: true } }),
+    ]);
+    const pages = new Map(docs.map((d) => [d.id, d.documentVersion.pageCount]));
+    const signerIds = new Set(signers.map((s) => s.id));
+    for (const f of fields) {
+      const pageCount = pages.get(f.envelopeDocumentId);
+      if (pageCount === undefined) throw Errors.validation('Campo aponta para documento que não está no envelope.');
+      if (!signerIds.has(f.signerId)) throw Errors.validation('Campo aponta para signatário que não está no envelope.');
+      if (f.page > pageCount) throw Errors.validation(`Página ${f.page} não existe no documento (${pageCount} páginas).`);
+      if (f.x + f.width > 1.000001 || f.y + f.height > 1.000001) throw Errors.validation('Campo ultrapassa os limites da página.');
+    }
+    await tx.envelopeField.deleteMany({ where: { envelopeId } });
+    if (fields.length > 0) {
+      await tx.envelopeField.createMany({
+        data: fields.map((f) => ({
+          organizationId: auth.organizationId,
+          envelopeId,
+          envelopeDocumentId: f.envelopeDocumentId,
+          signerId: f.signerId,
+          type: f.type,
+          page: f.page,
+          x: f.x,
+          y: f.y,
+          width: f.width,
+          height: f.height,
+        })),
+      });
+    }
+    await this.audit.record(tx, {
+      eventType: AuditEventType.ENVELOPE_FIELDS_UPDATED,
+      actor: actorOf(auth),
+      organizationId: auth.organizationId,
+      envelopeId,
+      ...client,
+      metadata: { count: fields.length, ...metadata },
+    });
   }
 
   // ───────────── Ativação ─────────────

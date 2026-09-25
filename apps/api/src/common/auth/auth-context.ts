@@ -34,6 +34,8 @@ export const Permission = {
   ENVELOPE_READ: 'envelope:read',
   ENVELOPE_WRITE: 'envelope:write',
   ENVELOPE_CANCEL: 'envelope:cancel',
+  TEMPLATE_READ: 'template:read',
+  TEMPLATE_WRITE: 'template:write',
   MEMBERS_READ: 'members:read',
   MEMBERS_MANAGE: 'members:manage',
   API_KEYS_MANAGE: 'api_keys:manage',
@@ -55,6 +57,8 @@ export const ROLE_PERMISSIONS: Record<MemberRole, readonly PermissionValue[]> = 
     Permission.ENVELOPE_READ,
     Permission.ENVELOPE_WRITE,
     Permission.ENVELOPE_CANCEL,
+    Permission.TEMPLATE_READ,
+    Permission.TEMPLATE_WRITE,
     Permission.MEMBERS_READ,
     Permission.MEMBERS_MANAGE,
     Permission.BILLING_READ,
@@ -66,9 +70,10 @@ export const ROLE_PERMISSIONS: Record<MemberRole, readonly PermissionValue[]> = 
     Permission.ENVELOPE_READ,
     Permission.ENVELOPE_WRITE,
     Permission.ENVELOPE_CANCEL,
+    Permission.TEMPLATE_READ,
     Permission.BILLING_READ,
   ],
-  VIEWER: [Permission.DOCUMENT_READ, Permission.ENVELOPE_READ, Permission.BILLING_READ],
+  VIEWER: [Permission.DOCUMENT_READ, Permission.ENVELOPE_READ, Permission.TEMPLATE_READ, Permission.BILLING_READ],
 };
 
 export function hasPermission(role: MemberRole, permission: PermissionValue): boolean {

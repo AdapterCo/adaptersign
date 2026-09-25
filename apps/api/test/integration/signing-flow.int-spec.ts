@@ -233,6 +233,66 @@ describe('Fluxo completo de assinatura (E2E)', () => {
     await expect(prisma.auditEvent.deleteMany({ where: { envelopeId } })).rejects.toThrow();
   });
 
+  it('modelo com âncoras posiciona os campos do rascunho (e é isolado por tenant)', async () => {
+    const tpl = await post(ownerA, '/api/v1/templates')
+      .send({
+        key: `contrato-${run}`,
+        name: 'Contrato com âncoras',
+        roles: [
+          { key: 'loja', label: 'Loja', signingGroup: 1, isCompany: true },
+          { key: 'cliente', label: 'Cliente', signingGroup: 2, initialsAllPages: true },
+        ],
+      })
+      .expect(201);
+    await ownerB.get(`/api/v1/templates/${tpl.body.id}`).expect(404);
+
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    doc.addPage().drawText('Cláusulas', { x: 50, y: 700, size: 12, font });
+    const last = doc.addPage();
+    last.drawText('[[AS:assinatura:loja]]', { x: 60, y: 200, size: 6, font });
+    last.drawText('[[AS:assinatura:cliente]] [[AS:data:cliente]]', { x: 320, y: 200, size: 6, font });
+    const pdf = Buffer.from(await doc.save());
+
+    const tested = await post(ownerA, `/api/v1/templates/${tpl.body.id}/test`)
+      .attach('file', pdf, { filename: 'modelo.pdf', contentType: 'application/pdf' })
+      .expect(200);
+    expect(tested.body.ok).toBe(true);
+    expect(tested.body.anchors).toHaveLength(3);
+
+    const upload = await post(ownerA, '/api/v1/documents').attach('file', pdf, { filename: 'venda.pdf', contentType: 'application/pdf' }).expect(201);
+    const env = await post(ownerA, '/api/v1/envelopes')
+      .send({
+        title: 'Venda com modelo',
+        documents: [{ documentId: upload.body.id }],
+        signers: [
+          { name: 'Loja Teste', email: `loja-${run}@exemplo.test`, authMethod: 'EMAIL_OTP' },
+          { name: 'Cliente Teste', email: `cliente-${run}@exemplo.test`, authMethod: 'EMAIL_OTP' },
+        ],
+      })
+      .expect(201);
+    const signers = env.body.signers as Array<{ id: string; email: string }>;
+    const loja = signers.find((x) => x.email.startsWith('loja-')) as { id: string };
+    const cliente = signers.find((x) => x.email.startsWith('cliente-')) as { id: string };
+    const applied = await post(ownerA, `/api/v1/envelopes/${env.body.id}/fields/apply-template`)
+      .send({ templateId: tpl.body.id, roles: [{ roleKey: 'loja', signerId: loja.id }, { roleKey: 'cliente', signerId: cliente.id }] })
+      .expect(200);
+    // 3 âncoras + rubrica do cliente nas 2 páginas.
+    expect(applied.body.fields).toHaveLength(5);
+    expect(applied.body.fields.filter((f: { signerId: string }) => f.signerId === cliente.id)).toHaveLength(4);
+
+    // Modelo exige assinatura de um papel sem âncora → recusado sem alterar os campos.
+    const strict = await post(ownerA, '/api/v1/templates')
+      .send({ key: `estrito-${run}`, name: 'Estrito', roles: [{ key: 'loja', label: 'Loja' }, { key: 'fiador', label: 'Fiador' }] })
+      .expect(201);
+    const refused = await post(ownerA, `/api/v1/envelopes/${env.body.id}/fields/apply-template`)
+      .send({ templateId: strict.body.id, roles: [{ roleKey: 'loja', signerId: loja.id }, { roleKey: 'fiador', signerId: cliente.id }] })
+      .expect(422);
+    expect(refused.body.error.code).toBe('TEMPLATE_ANCHORS_MISMATCH');
+    const still = await ownerA.get(`/api/v1/envelopes/${env.body.id}/fields`).expect(200);
+    expect(still.body).toHaveLength(5);
+  });
+
   it('logout-all revoga sessões (sessão revogada não autentica)', async () => {
     await post(ownerA, '/api/v1/auth/logout-all').expect(200);
     await ownerA.get('/api/v1/auth/me').expect(401);
