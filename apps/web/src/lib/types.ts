@@ -25,6 +25,7 @@ export interface EnvelopeDetail {
   finalizing: boolean;
   externalRef: string | null;
   templateId: string | null;
+  origin: 'integration' | 'manual';
   documents: Array<{
     id: string;
     documentId: string;
@@ -41,6 +42,7 @@ export interface EnvelopeDetail {
     email: string;
     phone: string | null;
     cpf: string | null;
+    hasCpf: boolean;
     role: string;
     signingGroup: number;
     roleKey: string | null;

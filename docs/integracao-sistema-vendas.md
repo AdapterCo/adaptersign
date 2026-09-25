@@ -195,6 +195,7 @@ autenticidade em `https://sign.adapterco.com.br/verify` (código ou arquivo).
 | `envelope.cancelled` | Cancelado |
 
 Consulta a qualquer momento: `GET /envelopes?externalRef=venda-123` ou `GET /envelopes/{id}`.
+Todos os contratos de um cliente: `GET /envelopes?cpf=52998224725`; de um vendedor: `GET /envelopes?representative=usuario-17`.
 
 ## 8. Tabela sugerida no sistema de vendas
 

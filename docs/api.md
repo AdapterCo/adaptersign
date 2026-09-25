@@ -46,7 +46,7 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | GET | `/documents/:id/versions/:versionId/content?mode=view\|download` | Conteúdo (download é auditado) |
 | POST | `/envelopes` | Cria rascunho (opcional: `documents[]`, `signers[]`, `externalRef`) |
 | POST | `/envelopes/from-template` (multipart `file` + `data`) | Contrato completo a partir de um modelo — ver "Contratos por integração" |
-| GET | `/envelopes` | Lista (busca por título, código, referência, signatário ou documento; `status`; `externalRef`) |
+| GET | `/envelopes` | Lista — busca livre (título, código, referência, signatário, CPF ou documento) e filtros `status`, `origin` (`integration`/`manual`), `externalRef`, `cpf`, `sameCpfAs` (id de signatário), `templateId`, `representative` (id do vendedor), `from`/`to` (data de criação). Cada item traz `origin`, `externalRef` e `template` |
 | GET | `/envelopes/auth-methods` | Métodos de autenticação (indisponíveis vêm marcados) |
 | GET/PATCH | `/envelopes/:id` | Detalhe / edição de rascunho |
 | POST/DELETE | `/envelopes/:id/documents[/:envelopeDocumentId]` | Documentos do rascunho |

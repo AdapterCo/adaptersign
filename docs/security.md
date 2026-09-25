@@ -20,6 +20,7 @@
 | Leitura de texto (âncoras) | pdf.js com `isEvalSupported: false`, sem fontes do sistema/FontFace, limite de 300 páginas; PDF tratado como conteúdo não confiável |
 | Integridade | SHA-256 do original; objetos imutáveis (`If-None-Match`); versões imutáveis (trigger); recálculo na finalização e na validação |
 | Auditoria | append-only (trigger), encadeamento SHA-256 com serialização canônica, horário do servidor (UTC) |
+| Busca por CPF | índice cego: HMAC-SHA256 (pepper `TOKEN_HASH_SECRET`) do CPF normalizado em `signers.cpf_hash`; a busca nunca decifra CPFs nem os devolve completos; CPF sem correspondência retorna lista vazia |
 | Dados pessoais | CPF cifrado (AES-256-GCM) + últimos 2 dígitos; e-mail, CPF, IP e nome mascarados em páginas públicas e relatórios |
 | Webhooks | HMAC-SHA256 com timestamp e event id; segredo cifrado; SSRF bloqueado; sem armazenar respostas |
 | HTTP | Helmet (CSP `default-src 'none'` na API, HSTS em produção, no-referrer), CORS restrito, `trust proxy` explícito |

@@ -191,6 +191,11 @@ export default function EnvelopeDetailPage() {
                       {s.phone && ` · ${s.phone}`}
                       {s.cpf && ` · ${s.cpf}`}
                     </p>
+                    {s.hasCpf && (
+                      <Link href={`/envelopes?sameCpfAs=${s.id}`} className="text-xs text-brand hover:underline">
+                        {t.envelopes.filters.sameCpfLink}
+                      </Link>
+                    )}
                     {s.representing && (
                       <p className="text-xs text-muted">
                         {t.envelopes.representing(s.representing)}
