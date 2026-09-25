@@ -50,7 +50,8 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | GET/PATCH | `/envelopes/:id` | Detalhe / edição de rascunho |
 | POST/DELETE | `/envelopes/:id/documents[/:envelopeDocumentId]` | Documentos do rascunho |
 | POST/DELETE | `/envelopes/:id/signers[/:signerId]` | Signatários do rascunho |
-| POST | `/envelopes/:id/activate` `{ "confirm": true }` | Envia para assinatura (documentos passam a ser imutáveis) |
+| GET/PUT | `/envelopes/:id/fields` | Campos posicionados (assinatura, rubrica, nome, data) — PUT substitui todos; só em rascunho |
+| POST | `/envelopes/:id/activate` `{ "confirm": true }` | Envia para assinatura (documentos e campos passam a ser imutáveis) |
 | POST | `/envelopes/:id/cancel` `{ "reason"? }` | Cancela (histórico preservado) |
 | POST | `/envelopes/:id/remind` `{ "signerId"? }` | Lembrete manual (no máximo 1 por hora por signatário) |
 | GET | `/envelopes/:id/timeline` | Eventos e verificação da cadeia |
