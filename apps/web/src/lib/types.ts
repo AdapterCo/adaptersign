@@ -53,6 +53,42 @@ export interface EnvelopeDetail {
 
 export type FieldType = 'SIGNATURE' | 'INITIALS' | 'NAME' | 'DATE';
 
+export type PageCorner = 'BOTTOM_RIGHT' | 'BOTTOM_LEFT' | 'TOP_RIGHT' | 'TOP_LEFT';
+
+export interface TemplateRole {
+  key: string;
+  label: string;
+  signingGroup: number;
+  isCompany: boolean;
+  initialsAllPages: boolean;
+  initialsCorner: PageCorner;
+}
+
+export interface Template {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  signingMode: 'SEQUENTIAL' | 'PARALLEL';
+  createdAt: string;
+  updatedAt: string;
+  roles: TemplateRole[];
+}
+
+/** Pendências da busca de âncoras (modelo x PDF). */
+export interface AnchorIssues {
+  missingSignature: string[];
+  unknownRoles: string[];
+  invalid: Array<{ text: string; page: number }>;
+}
+
+export interface TemplateTestResult extends AnchorIssues {
+  ok: boolean;
+  pages: Array<{ page: number; width: number; height: number }>;
+  anchors: Array<{ text: string; type: FieldType; role: string; page: number; x: number; y: number; width: number; height: number }>;
+  fields: Array<{ role: string; type: FieldType; page: number; x: number; y: number; width: number; height: number; source: 'anchor' | 'all_pages' }>;
+}
+
 /** Coordenadas normalizadas (0..1), origem no canto superior esquerdo da página exibida. */
 export interface EnvelopeField {
   id?: string;

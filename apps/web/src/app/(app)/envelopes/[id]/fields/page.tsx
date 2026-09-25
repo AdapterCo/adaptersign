@@ -3,11 +3,13 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { api, newIdempotencyKey } from '@/lib/api';
+import { api, ApiError, newIdempotencyKey } from '@/lib/api';
 import { t } from '@/lib/i18n';
 import { useApi } from '@/lib/use-api';
-import type { EnvelopeDetail, EnvelopeField, FieldType } from '@/lib/types';
+import type { AnchorIssues, EnvelopeDetail, EnvelopeField, FieldType, Template } from '@/lib/types';
 import { PdfViewer } from '@/components/pdf-viewer';
+import { useSession } from '@/components/session';
+import { AnchorIssuesList } from '@/components/templates';
 import { Alert, Button, Card, ErrorMessage, Field, PageHeader, Select, Spinner } from '@/components/ui';
 
 type LocalField = EnvelopeField & { key: string };
@@ -37,6 +39,11 @@ export default function FieldsEditorPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { data: env, error, loading } = useApi<EnvelopeDetail>(`/envelopes/${id}`);
+  const { can } = useSession();
+  const { data: templates } = useApi<Template[]>(can('template:read') ? '/templates' : null);
+  const [templateId, setTemplateId] = useState('');
+  const [roleSigners, setRoleSigners] = useState<Record<string, string>>({});
+  const [issues, setIssues] = useState<AnchorIssues | null>(null);
   const [fields, setFields] = useState<LocalField[]>([]);
   const [docId, setDocId] = useState('');
   const [signerId, setSignerId] = useState('');
@@ -137,6 +144,40 @@ export default function FieldsEditorPage() {
     }
   }
 
+  const template = templates?.find((tp) => tp.id === templateId);
+
+  function chooseTemplate(tid: string) {
+    setTemplateId(tid);
+    setIssues(null);
+    const tp = templates?.find((x) => x.id === tid);
+    // Sugestão inicial: papel N → N-ésimo signatário.
+    setRoleSigners(Object.fromEntries((tp?.roles ?? []).map((r, i) => [r.key, env?.signers[i]?.id ?? ''])));
+  }
+
+  async function applyTemplate() {
+    if (!template) return;
+    setBusy(true);
+    setActionError(null);
+    setIssues(null);
+    setNotice(null);
+    try {
+      const res = await api<{ fields: EnvelopeField[]; anchors: number }>(`/envelopes/${id}/fields/apply-template`, {
+        method: 'POST',
+        body: { templateId: template.id, roles: template.roles.map((r) => ({ roleKey: r.key, signerId: roleSigners[r.key] })) },
+      });
+      setFields(res.fields.map((f) => ({ ...f, key: f.id ?? crypto.randomUUID() })));
+      setDirty(false);
+      setNotice(t.templates.applied(res.fields.length, res.anchors));
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'TEMPLATE_ANCHORS_MISMATCH' && err.details) {
+        const d = err.details as { missing_signature?: string[]; unknown_roles?: string[]; invalid?: Array<{ text: string; page: number }> };
+        setIssues({ missingSignature: d.missing_signature ?? [], unknownRoles: d.unknown_roles ?? [], invalid: d.invalid ?? [] });
+      } else setActionError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveAndSend() {
     if (!confirmSend) return;
     if (!(await save())) return;
@@ -228,6 +269,59 @@ export default function FieldsEditorPage() {
       />
       <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
         <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
+          {editable && templates && (
+            <Card title={t.templates.apply}>
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-muted">{t.templates.applyHelp}</p>
+                {templates.length === 0 ? (
+                  <Link href="/templates" className="text-sm text-brand hover:underline">
+                    {t.templates.manage}
+                  </Link>
+                ) : (
+                  <Field label={t.templates.applyTemplate}>
+                    {(fid) => (
+                      <Select id={fid} value={templateId} onChange={(e) => chooseTemplate(e.target.value)}>
+                        <option value="">{t.templates.choose}</option>
+                        {templates.map((tp) => (
+                          <option key={tp.id} value={tp.id}>
+                            {tp.name}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                )}
+                {template?.roles.map((r) => (
+                  <Field key={r.key} label={t.templates.applyRole(r.label)}>
+                    {(fid) => (
+                      <Select id={fid} value={roleSigners[r.key] ?? ''} onChange={(e) => setRoleSigners((m) => ({ ...m, [r.key]: e.target.value }))}>
+                        <option value="">{t.templates.choose}</option>
+                        {env.signers.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                ))}
+                {template && (
+                  <>
+                    {fields.length > 0 && <p className="text-xs text-muted">{t.templates.applyReplace}</p>}
+                    <Button
+                      variant="secondary"
+                      loading={busy}
+                      disabled={template.roles.some((r) => !roleSigners[r.key])}
+                      onClick={() => void applyTemplate()}
+                    >
+                      {t.templates.applyRun}
+                    </Button>
+                  </>
+                )}
+                {issues && <AnchorIssuesList issues={issues} labelOf={(k) => template?.roles.find((r) => r.key === k)?.label ?? k} />}
+              </div>
+            </Card>
+          )}
           <Card>
             <div className="flex flex-col gap-4">
               {!editable && <Alert tone="info">{t.fields.readOnly}</Alert>}

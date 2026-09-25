@@ -9,7 +9,9 @@ import { ErrorMessage, Spinner } from './ui';
 const MAX_PAGES_RENDERED = 100;
 
 export interface PdfViewerProps {
-  path: string;
+  /** Endpoint autenticado do PDF — ou `file` para um arquivo local (não enviado ao servidor). */
+  path?: string;
+  file?: Blob;
   title: string;
   /**
    * Conteúdo sobreposto à página (campos). Posicione com porcentagens: o contêiner tem o
@@ -65,7 +67,7 @@ function PdfPage({ doc, number, width, title, overlay, onPageClick }: { doc: PDF
  * Visualizador seguro: o PDF é obtido por endpoint autenticado (sem URL pública permanente)
  * e renderizado em canvas pelo pdf.js — funciona em celulares (inclusive iOS).
  */
-export function PdfViewer({ path, title, overlay, onPageClick }: PdfViewerProps) {
+export function PdfViewer({ path, file, title, overlay, onPageClick }: PdfViewerProps) {
   const container = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -78,8 +80,9 @@ export function PdfViewer({ path, title, overlay, onPageClick }: PdfViewerProps)
     (async () => {
       const pdfjs = await import('pdfjs-dist');
       pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-      const res = await apiFetch(path);
-      const data = new Uint8Array(await res.arrayBuffer());
+      const source = file ?? (path ? await apiFetch(path) : null);
+      if (!source) return;
+      const data = new Uint8Array(await source.arrayBuffer());
       const loaded = await pdfjs.getDocument({ data }).promise;
       if (!cancelled) setDoc(loaded);
     })().catch((err) => {
@@ -88,7 +91,7 @@ export function PdfViewer({ path, title, overlay, onPageClick }: PdfViewerProps)
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, file]);
 
   useEffect(() => {
     const el = container.current;
