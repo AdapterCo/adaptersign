@@ -188,6 +188,7 @@ export default function EnvelopeDetailPage() {
                     </p>
                     <p className="text-sm text-muted">
                       {s.email}
+                      {s.phone && ` · ${s.phone}`}
                       {s.cpf && ` · ${s.cpf}`}
                     </p>
                     {s.representing && (

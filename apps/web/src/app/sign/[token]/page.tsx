@@ -10,9 +10,21 @@ import { PdfViewer } from '@/components/pdf-viewer';
 import { SignaturePad } from '@/components/signature-pad';
 import { Alert, Button, Card, ErrorMessage, Field, Input, Spinner, Textarea } from '@/components/ui';
 
+type OtpChannel = 'EMAIL' | 'WHATSAPP';
+
 interface SignState {
   envelope: { title: string; message: string | null; status: string; organizationName: string; expiresAt: string | null; validationCode: string; finalizing: boolean };
-  signer: { name: string; email: string; status: string; authenticated: boolean; requiresOtp: boolean; canSign: boolean; signedAt: string | null; authMethodLabel: string };
+  signer: {
+    name: string;
+    email: string;
+    status: string;
+    authenticated: boolean;
+    requiresOtp: boolean;
+    canSign: boolean;
+    signedAt: string | null;
+    authMethodLabel: string;
+    otp: { channels: OtpChannel[]; defaultChannel: OtpChannel | null; destinations: { EMAIL: string; WHATSAPP: string | null } } | null;
+  };
   documents: Array<{
     id: string;
     filename: string;
@@ -32,6 +44,7 @@ export default function SignPage() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [otpSent, setOtpSent] = useState<string | null>(null);
+  const [otpChannel, setOtpChannel] = useState<OtpChannel | null>(null);
   const [code, setCode] = useState('');
   const [docIndex, setDocIndex] = useState(0);
   const [reviewed, setReviewed] = useState(false);
@@ -68,10 +81,15 @@ export default function SignPage() {
     }
   }
 
-  const requestOtp = () =>
+  const requestOtp = (channel?: OtpChannel) =>
     act(async () => {
-      const r = await api<{ destination: string }>('/sign/otp/request', { method: 'POST', noRefresh: true });
+      const r = await api<{ destination: string; channel: OtpChannel }>('/sign/otp/request', {
+        method: 'POST',
+        body: channel ? { channel } : {},
+        noRefresh: true,
+      });
       setOtpSent(r.destination);
+      setOtpChannel(r.channel);
     });
 
   const verifyOtp = () => act(async () => setState(await api<SignState>('/sign/otp/verify', { method: 'POST', body: { code }, noRefresh: true })));
@@ -163,10 +181,27 @@ export default function SignPage() {
           <Card title={t.sign.authTitle}>
             {!otpSent ? (
               <>
-                <p className="mb-4 text-sm">{t.sign.authOtpHelp(signer.email)}</p>
-                <Button onClick={requestOtp} loading={busy} className="w-full sm:w-auto">
-                  {t.sign.sendCode}
-                </Button>
+                {(() => {
+                  const otp = signer.otp;
+                  const first = otp?.defaultChannel ?? 'EMAIL';
+                  const dest = (c: OtpChannel) => (c === 'WHATSAPP' ? (otp?.destinations.WHATSAPP ?? '') : (otp?.destinations.EMAIL ?? signer.email));
+                  const others = (otp?.channels ?? []).filter((c) => c !== first);
+                  return (
+                    <>
+                      <p className="mb-4 text-sm">{first === 'WHATSAPP' ? t.sign.authOtpHelpWhatsApp(dest(first)) : t.sign.authOtpHelp(dest(first))}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={() => requestOtp(first)} loading={busy} className="w-full sm:w-auto">
+                          {t.sign.sendCode}
+                        </Button>
+                        {others.map((c) => (
+                          <Button key={c} variant="ghost" onClick={() => requestOtp(c)} disabled={busy}>
+                            {c === 'WHATSAPP' ? t.sign.sendByWhatsApp : t.sign.sendByEmail}
+                          </Button>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
               </>
             ) : (
               <form
@@ -176,7 +211,7 @@ export default function SignPage() {
                   void verifyOtp();
                 }}
               >
-                <Alert tone="info">{t.sign.codeSent(otpSent)}</Alert>
+                <Alert tone="info">{otpChannel === 'WHATSAPP' ? t.sign.codeSentWhatsApp(otpSent) : t.sign.codeSent(otpSent)}</Alert>
                 <Field label={t.sign.code}>
                   {(id) => (
                     <Input
@@ -195,9 +230,16 @@ export default function SignPage() {
                   <Button type="submit" loading={busy} disabled={code.length !== 6}>
                     {t.sign.verify}
                   </Button>
-                  <Button type="button" variant="ghost" onClick={requestOtp} disabled={busy}>
+                  <Button type="button" variant="ghost" onClick={() => requestOtp(otpChannel ?? undefined)} disabled={busy}>
                     {t.sign.resend}
                   </Button>
+                  {(signer.otp?.channels ?? [])
+                    .filter((c) => c !== otpChannel)
+                    .map((c) => (
+                      <Button key={c} type="button" variant="ghost" onClick={() => requestOtp(c)} disabled={busy}>
+                        {c === 'WHATSAPP' ? t.sign.sendByWhatsApp : t.sign.sendByEmail}
+                      </Button>
+                    ))}
                 </div>
               </form>
             )}

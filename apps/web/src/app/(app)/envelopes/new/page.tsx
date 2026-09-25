@@ -14,6 +14,7 @@ interface SignerDraft {
   id?: string; // signatário já salvo no rascunho
   name: string;
   email: string;
+  phone: string;
   cpf: string;
   role: 'SIGNER' | 'APPROVER' | 'WITNESS';
   signingGroup: number;
@@ -32,6 +33,7 @@ const newSigner = (group: number): SignerDraft => ({
   key: crypto.randomUUID(),
   name: '',
   email: '',
+  phone: '',
   cpf: '',
   role: 'SIGNER',
   signingGroup: group,
@@ -80,6 +82,7 @@ function Wizard() {
               id: s.id,
               name: s.name,
               email: s.email,
+              phone: s.phone ?? '',
               cpf: '',
               role: s.role as SignerDraft['role'],
               signingGroup: s.signingGroup,
@@ -114,6 +117,7 @@ function Wizard() {
     return {
       name: s.name.trim(),
       email: s.email.trim(),
+      ...(s.phone.trim() ? { phone: s.phone.trim() } : {}),
       ...(s.cpf ? { cpf: s.cpf } : {}),
       role: s.role,
       signingGroup: mode === 'SEQUENTIAL' ? s.signingGroup : 1,
@@ -244,6 +248,9 @@ function Wizard() {
                 <legend className="px-1 text-sm font-semibold">#{i + 1}</legend>
                 <Field label={t.wizard.signerName}>{(id) => <Input id={id} value={s.name} onChange={(e) => updateSigner(s.key, { name: e.target.value })} />}</Field>
                 <Field label={t.wizard.signerEmail}>{(id) => <Input id={id} type="email" value={s.email} onChange={(e) => updateSigner(s.key, { email: e.target.value })} />}</Field>
+                <Field label={t.wizard.signerPhone} hint={t.wizard.signerPhoneHint}>
+                  {(id) => <Input id={id} type="tel" inputMode="tel" autoComplete="tel" value={s.phone} onChange={(e) => updateSigner(s.key, { phone: e.target.value })} />}
+                </Field>
                 <Field label={t.wizard.signerCpf}>{(id) => <Input id={id} inputMode="numeric" value={s.cpf} onChange={(e) => updateSigner(s.key, { cpf: e.target.value })} />}</Field>
                 <Field label={t.wizard.signerRole}>
                   {(id) => (
