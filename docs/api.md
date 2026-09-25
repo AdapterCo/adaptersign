@@ -51,6 +51,10 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | POST/DELETE | `/envelopes/:id/documents[/:envelopeDocumentId]` | Documentos do rascunho |
 | POST/DELETE | `/envelopes/:id/signers[/:signerId]` | Signatários do rascunho |
 | GET/PUT | `/envelopes/:id/fields` | Campos posicionados (assinatura, rubrica, nome, data) — PUT substitui todos; só em rascunho |
+| POST | `/envelopes/:id/fields/apply-template` | Posiciona os campos pelas âncoras dos PDFs, conforme um modelo (ver abaixo) |
+| GET/POST | `/templates` | Modelos de contrato (papéis) |
+| GET/PUT/DELETE | `/templates/:id` | Detalhe / alteração (papéis substituídos) / arquivamento |
+| POST | `/templates/:id/test` (multipart `file`) | Testa um PDF de exemplo: âncoras encontradas e campos resultantes (nada é armazenado) |
 | POST | `/envelopes/:id/activate` `{ "confirm": true }` | Envia para assinatura (documentos e campos passam a ser imutáveis) |
 | POST | `/envelopes/:id/cancel` `{ "reason"? }` | Cancela (histórico preservado) |
 | POST | `/envelopes/:id/remind` `{ "signerId"? }` | Lembrete manual (no máximo 1 por hora por signatário) |
@@ -74,6 +78,30 @@ curl -X POST https://sign.adapterco.com.br/api/v1/envelopes/<id>/activate \
 
 Signatário com `signingGroup`: em modo `SEQUENTIAL`, o grupo N só é convidado depois que todos os
 signatários **obrigatórios** dos grupos anteriores assinaram. Em `PARALLEL`, todos pertencem ao grupo 1.
+
+## Modelos e âncoras
+
+Um **modelo** define os papéis de um tipo de contrato (ex.: `loja` e `cliente`), a ordem de assinatura e se
+um papel rubrica todas as páginas. O PDF de cada contrato (gerado pelo sistema de origem) leva **âncoras** —
+marcadores de texto — onde os campos devem aparecer:
+
+| Âncora | Campo criado |
+| --- | --- |
+| `[[AS:assinatura:<papel>]]` | Assinatura — obrigatória para cada papel do modelo |
+| `[[AS:rubrica:<papel>]]` | Rubrica naquele ponto (opcional) |
+| `[[AS:nome:<papel>]]` | Nome do signatário (opcional) |
+| `[[AS:data:<papel>]]` | Data da assinatura (opcional) |
+
+- Coloque a âncora de assinatura **logo acima da linha de assinatura**, alinhada ao início dela; o campo
+  começa na esquerda da âncora e encosta na linha. Nome/data ocupam o lugar da própria âncora.
+- A âncora pode ser invisível (cor branca, fonte pequena), mas precisa ser **texto** no PDF (não imagem).
+  Espaços e maiúsculas são ignorados, então quebras feitas pelo gerador de PDF não atrapalham.
+- "Rubrica em todas as páginas" (opção do papel) coloca a rubrica no canto escolhido de cada página, exceto
+  nas páginas que já têm uma âncora de rubrica desse papel.
+- `apply-template` recebe `{ "templateId", "roles": [{ "roleKey", "signerId" }] }` e substitui os campos do
+  rascunho. Se faltar a âncora de assinatura de algum papel, houver âncora de papel inexistente ou âncora
+  malformada, responde `422 TEMPLATE_ANCHORS_MISMATCH` (com `missing_signature`, `unknown_roles` e `invalid`
+  em `details`) **sem alterar nada**.
 
 ## Webhooks
 

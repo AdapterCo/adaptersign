@@ -46,7 +46,7 @@ Todas as licenças são MIT, MIT-0 ou Apache-2.0. Rode `npm audit` antes de cada
    nem é usado (o banco é PostgreSQL). Correção: atualizar o Prisma quando houver versão estável que as resolva.
 3. Termos de uso e política de privacidade não existem (dependem do jurídico).
 4. Checkout de pagamento não implementado: `ManualBillingProvider` responde "indisponível" de forma explícita, e os planos são atribuídos no painel.
-5. Campos posicionados, templates, envio em lote, SMS, WhatsApp, biometria, ICP-Brasil e white label estão apenas preparados (enum, schema e feature flags), não implementados.
+5. Envio em lote, SMS, WhatsApp, biometria, ICP-Brasil e white label estão apenas preparados (enum, schema e feature flags), não implementados.
 6. Rotina de expurgo por retenção não implementada (exige política explícita).
 7. Textos com caracteres fora do Latin-1 aparecem como `?` nos PDFs gerados (fontes padrão WinAnsi). Para suporte completo, embutir uma fonte TTF (ex.: Noto Sans via `@pdf-lib/fontkit`).
 8. Testes de UI (Playwright) ainda não escritos.

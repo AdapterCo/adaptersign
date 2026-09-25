@@ -57,7 +57,11 @@ E-mails (convites, OTP) aparecem no Mailpit: <http://localhost:8025>.
 
 Os testes unitários (`apps/api/test/unit`) cobrem: encadeamento de auditoria e serialização canônica, state
 machine e ordem por grupos, geração de tokens/OTP/códigos, mascaramento, CPF, HMAC de webhooks (com replay),
-proteção SSRF, validação de PDF (magic bytes, estrutura) e geração do PDF final e do relatório.
+proteção SSRF, validação de PDF (magic bytes, estrutura), geração do PDF final e do relatório, geometria dos
+campos posicionados e busca de âncoras (inclusive em PDF real com página girada, via pdf.js).
+
+O pdf.js é distribuído só como ESM; por isso os scripts de teste rodam o Jest com
+`node --experimental-vm-modules` (já configurado em `apps/api/package.json`).
 
 O teste E2E (`apps/api/test/integration/signing-flow.int-spec.ts`) cobre o fluxo obrigatório
 empresa → usuário → upload → envelope → signatário → convite → OTP → aceite → assinatura → conclusão → relatório → validação,

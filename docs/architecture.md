@@ -28,7 +28,8 @@ Integrações usam o mesmo host (`https://sign.adapterco.com.br/api/v1`) com API
 | auth | cadastro, login, sessões (família de refresh tokens), senha, verificação de e-mail |
 | organizations | organização atual, membros, papéis |
 | documents | upload validado, SHA-256, versões imutáveis, download |
-| envelopes | state machine, rascunho, documentos, signatários, ativação, cancelamento, lembretes, expiração |
+| envelopes | state machine, rascunho, documentos, signatários, campos posicionados, ativação, cancelamento, lembretes, expiração |
+| templates | modelos de contrato (papéis) e posicionamento automático de campos por âncoras `[[AS:tipo:papel]]` no PDF (pdf.js) |
 | signing | fluxo público do signatário, OTP, `SignatureEngine`, registro de métodos de autenticação |
 | evidence | documento final, relatório de evidências, finalização atômica |
 | audit | eventos append-only encadeados |
