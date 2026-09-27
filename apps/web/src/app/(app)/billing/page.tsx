@@ -141,6 +141,7 @@ function Billing() {
 
         <Card title={t.billing.plans}>
           <p className="mb-4 text-sm text-muted">{t.billing.plansHelp}</p>
+          {!data.plans.some((p) => p.priceCents) && <Alert tone="info">{t.billing.noPlans}</Alert>}
           <div className="grid gap-4 sm:grid-cols-3">
             {data.plans
               .filter((p) => p.priceCents)
@@ -182,6 +183,7 @@ function Billing() {
 
         <Card title={t.billing.extras}>
           <p className="mb-4 text-sm text-muted">{data.current.paid ? t.billing.extrasHelp : t.billing.extrasPaidOnly}</p>
+          {data.creditPacks.length === 0 && <Alert tone="info">{t.billing.noPacks}</Alert>}
           <div className="grid gap-4 sm:grid-cols-3">
             {data.creditPacks.map((k) => (
               <div key={k.code} className="flex flex-col rounded-xl border border-line p-4">
