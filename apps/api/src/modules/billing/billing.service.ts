@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   ActorType,
   BillingPaymentKind,
@@ -24,6 +24,14 @@ import { BILLING_PROVIDER, type BillingProvider, type ProviderPayment } from './
 import { envelopeQuota, mapProviderStatus, nextPeriod } from './billing-period';
 
 const CHECKOUT_TTL_MS = 24 * 3600 * 1000;
+const PIX_TTL_MS = 30 * 60 * 1000;
+/** Cobranças que ainda aceitam uma (nova) tentativa de pagamento. */
+const PAYABLE_STATUSES: BillingPaymentStatus[] = [
+  BillingPaymentStatus.PENDING,
+  BillingPaymentStatus.IN_PROCESS,
+  BillingPaymentStatus.REJECTED,
+  BillingPaymentStatus.CANCELLED,
+];
 const OPEN_STATUSES: BillingPaymentStatus[] = [BillingPaymentStatus.PENDING, BillingPaymentStatus.IN_PROCESS];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -31,6 +39,15 @@ type PaymentView = BillingPayment & { plan: Pick<Plan, 'code' | 'name'> | null; 
 const viewInclude = { plan: { select: { code: true, name: true } }, creditPack: { select: { code: true, name: true } } } as const;
 
 export type CheckoutItem = { planCode: string } | { packCode: string };
+
+export interface CardInput {
+  token: string;
+  paymentMethodId: string;
+  issuerId?: string;
+  payerEmail?: string;
+  identificationType?: 'CPF' | 'CNPJ';
+  identificationNumber?: string;
+}
 
 /**
  * Contratação de planos (pré-pago, mensal) e de pacotes de documentos extras. O navegador só
@@ -69,6 +86,8 @@ export class BillingService {
     const canBuyCredits = this.provider.available && this.plans.isPaidPlan(current);
     return {
       onlinePayment: this.provider.available,
+      // Chave PÚBLICA do Mercado Pago (tokenização do cartão no navegador) — não é segredo.
+      publicKey: this.provider.publicKey,
       current: {
         code: current.code,
         name: current.name,
@@ -125,6 +144,13 @@ export class BillingService {
       amountCents: p.amountCents,
       currency: p.currency,
       paymentType: p.paymentType,
+      statusDetail: p.statusDetail,
+      payable: PAYABLE_STATUSES.includes(p.status) && p.expiresAt > new Date(),
+      // Pix em aberto: QR Code e copia-e-cola (dados públicos para quem paga).
+      pix:
+        p.pixQrCode && p.pixExpiresAt && p.pixExpiresAt > new Date() && OPEN_STATUSES.includes(p.status)
+          ? { qrCode: p.pixQrCode, qrCodeBase64: p.pixQrCodeBase64, expiresAt: p.pixExpiresAt }
+          : null,
       approvedAt: p.approvedAt,
       periodStart: p.periodStart,
       periodEnd: p.periodEnd,
@@ -208,10 +234,6 @@ export class BillingService {
       };
     }
 
-    const [user, org] = await Promise.all([
-      this.prisma.user.findUniqueOrThrow({ where: { id: auth.userId }, select: { email: true } }),
-      this.prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId }, select: { name: true } }),
-    ]);
     const id = randomUUID();
     const expiresAt = new Date(Date.now() + CHECKOUT_TTL_MS);
     await this.prisma.tx(async (tx) => {
@@ -240,25 +262,121 @@ export class BillingService {
       });
     });
 
-    const appUrl = this.config.APP_PUBLIC_URL.replace(/\/+$/, '');
-    const apiUrl = this.config.API_PUBLIC_URL.replace(/\/+$/, '');
-    try {
-      const { checkoutId, url } = await this.provider.createCheckout({
-        reference: id,
-        title: `${this.config.BRAND_NAME} — ${product.title} — ${org.name}`.slice(0, 250),
-        amountCents: product.amountCents,
-        currency: product.currency,
-        payerEmail: user.email,
-        returnUrl: `${appUrl}/billing?payment=${id}`,
-        notificationUrl: `${apiUrl}/api/v1/billing/webhooks/mercadopago`,
-        expiresAt,
+    // Pedido criado; o pagamento (Pix ou cartão) é feito em seguida, sempre pelo backend.
+    return { paymentId: id, amountCents: product.amountCents, currency: product.currency, description: product.title };
+  }
+
+  private notificationUrl(): string {
+    return `${this.config.API_PUBLIC_URL.replace(/\/+$/, '')}/api/v1/billing/webhooks/mercadopago`;
+  }
+
+  /** Cobrança da organização que ainda aceita pagamento (valor e produto vêm do banco). */
+  private async payable(auth: AuthContext, id: string) {
+    if (auth.kind !== 'user') throw Errors.forbidden();
+    if (!this.provider.available) throw Errors.unavailable('BILLING_PROVIDER_NOT_CONFIGURED', 'Pagamento online ainda não está disponível.');
+    const rec = await this.prisma.billingPayment.findFirst({
+      where: { id, organizationId: auth.organizationId },
+      include: { plan: { select: { name: true } }, organization: { select: { name: true } } },
+    });
+    if (!rec) throw Errors.notFound('PAYMENT_NOT_FOUND', 'Pagamento não encontrado.');
+    if (rec.status === BillingPaymentStatus.APPROVED) throw Errors.conflict('PAYMENT_ALREADY_APPROVED', 'Este pagamento já foi aprovado.');
+    if (!PAYABLE_STATUSES.includes(rec.status) || rec.expiresAt <= new Date()) {
+      throw Errors.conflict('PAYMENT_EXPIRED', 'Esta cobrança expirou. Escolha o plano ou pacote novamente.');
+    }
+    const title = rec.kind === BillingPaymentKind.PLAN ? `plano ${rec.plan?.name ?? ''} (1 mês)` : `${rec.documents ?? 0} documentos extras`;
+    const description = `${this.config.BRAND_NAME} — ${title} — ${rec.organization.name}`.slice(0, 250);
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: auth.userId }, select: { email: true } });
+    return { rec, description, userEmail: user.email };
+  }
+
+  /** Gera (ou reaproveita) o Pix da cobrança; o QR Code é exibido na tela do Adapter Sign. */
+  async payWithPix(auth: AuthContext, id: string, client: ClientInfo) {
+    const { rec, description, userEmail } = await this.payable(auth, id);
+    const now = new Date();
+    const reusable =
+      rec.pixPaymentId && rec.pixQrCode && rec.pixExpiresAt && rec.pixExpiresAt.getTime() > now.getTime() + 60_000 && OPEN_STATUSES.includes(rec.status);
+    if (reusable) return this.get(auth, id);
+    await this.limiter.consume('billing_pay', auth.organizationId);
+    const expiresAt = new Date(Math.min(now.getTime() + PIX_TTL_MS, rec.expiresAt.getTime()));
+    const payment = await this.provider.createPixPayment({
+      reference: rec.id,
+      description,
+      amountCents: rec.amountCents,
+      notificationUrl: this.notificationUrl(),
+      idempotencyKey: `pix-${rec.id}-${now.getTime()}`,
+      payerEmail: userEmail,
+      expiresAt,
+    });
+    if (!payment.pix || payment.amountCents !== rec.amountCents) {
+      throw Errors.unavailable('PAYMENT_PROVIDER_ERROR', 'Não foi possível gerar o Pix. Tente novamente.');
+    }
+    await this.prisma.tx(async (tx) => {
+      await tx.billingPayment.update({
+        where: { id: rec.id },
+        data: {
+          status: BillingPaymentStatus.PENDING,
+          statusDetail: null,
+          pixPaymentId: payment.id,
+          pixQrCode: payment.pix!.qrCode,
+          pixQrCodeBase64: payment.pix!.qrCodeBase64,
+          pixExpiresAt: payment.pix!.expiresAt ?? expiresAt,
+        },
       });
-      await this.prisma.billingPayment.update({ where: { id }, data: { providerCheckoutId: checkoutId } });
-      // Somente o id interno e a URL da página de pagamento do provedor.
-      return { paymentId: id, url };
-    } catch (err) {
-      await this.prisma.billingPayment.update({ where: { id }, data: { status: BillingPaymentStatus.CANCELLED, statusDetail: 'checkout_failed' } });
-      throw err;
+      await this.audit.record(tx, {
+        eventType: AuditEventType.BILLING_PAYMENT_UPDATED,
+        actor: actorOf(auth),
+        organizationId: rec.organizationId,
+        ...client,
+        metadata: { paymentId: rec.id, providerPaymentId: payment.id, method: 'pix', action: 'pix_created' },
+      });
+    });
+    return this.get(auth, id);
+  }
+
+  /**
+   * Cartão (crédito/débito à vista): o navegador envia apenas o TOKEN de uso único gerado pelo
+   * componente do Mercado Pago. Valor, parcelas (1) e descrição são definidos aqui.
+   */
+  async payWithCard(auth: AuthContext, id: string, input: CardInput, client: ClientInfo) {
+    const { rec, description, userEmail } = await this.payable(auth, id);
+    await this.limiter.consume('billing_pay', auth.organizationId);
+    const idDigits = input.identificationNumber?.replace(/\D/g, '') ?? '';
+    const identification = input.identificationType && idDigits ? { type: input.identificationType, number: idDigits } : null;
+    await this.prisma.billingPayment.update({ where: { id: rec.id }, data: { status: BillingPaymentStatus.PENDING, statusDetail: null } });
+    const payment = await this.provider.createCardPayment({
+      reference: rec.id,
+      description,
+      amountCents: rec.amountCents,
+      notificationUrl: this.notificationUrl(),
+      // A mesma tentativa (mesmo token) nunca cobra duas vezes.
+      idempotencyKey: `card-${rec.id}-${createHash('sha256').update(input.token).digest('hex').slice(0, 32)}`,
+      token: input.token,
+      paymentMethodId: input.paymentMethodId,
+      issuerId: input.issuerId ?? null,
+      payer: { email: input.payerEmail ?? userEmail, identification },
+    });
+    await this.audit.recordStandalone({
+      eventType: AuditEventType.BILLING_PAYMENT_UPDATED,
+      actor: actorOf(auth),
+      organizationId: rec.organizationId,
+      ...client,
+      metadata: { paymentId: rec.id, providerPaymentId: payment.id, method: 'card', status: payment.status, statusDetail: payment.statusDetail },
+    });
+    await this.settle(payment, 'card');
+    return this.get(auth, id);
+  }
+
+  /** Aplica o pagamento e, se aprovado, cancela outras tentativas pendentes (ex.: Pix gerado antes). */
+  private async settle(payment: ProviderPayment, source: 'webhook' | 'reconcile' | 'card'): Promise<void> {
+    await this.apply(payment, source);
+    if (payment.status !== 'approved' || !payment.externalReference) return;
+    const others = await this.provider.findPaymentsByReference(payment.externalReference).catch(() => []);
+    for (const o of others) {
+      if (o.id !== payment.id && (o.status === 'pending' || o.status === 'in_process')) {
+        await this.provider
+          .cancelPayment(o.id)
+          .catch((err: unknown) => this.logger.warn({ event: 'billing_cancel_pending_failed', providerPaymentId: o.id, error: String(err) }));
+      }
     }
   }
 
@@ -268,18 +386,18 @@ export class BillingService {
   async handleNotification(paymentId: string): Promise<void> {
     const payment = await this.provider.getPayment(paymentId);
     if (!payment) return;
-    await this.apply(payment, 'webhook');
+    await this.settle(payment, 'webhook');
   }
 
   async reconcile(billingPaymentId: string): Promise<void> {
     const payments = await this.provider.findPaymentsByReference(billingPaymentId);
     // Aprovados primeiro: um pagamento recusado seguido de um aprovado libera a compra.
     const ordered = [...payments].sort((a, b) => Number(b.status === 'approved') - Number(a.status === 'approved'));
-    for (const p of ordered) await this.apply(p, 'reconcile');
+    for (const p of ordered) await this.settle(p, 'reconcile');
   }
 
   /** Aplica o estado de um pagamento do provedor. Idempotente e serializado por cobrança. */
-  async apply(p: ProviderPayment, source: 'webhook' | 'reconcile'): Promise<void> {
+  async apply(p: ProviderPayment, source: 'webhook' | 'reconcile' | 'card'): Promise<void> {
     const ref = p.externalReference;
     if (!ref || !UUID.test(ref)) return;
     const next = mapProviderStatus(p.status);
@@ -332,6 +450,9 @@ export class BillingService {
             paymentMethod: p.paymentMethod,
             statusDetail: p.statusDetail,
             approvedAt: p.approvedAt ?? now,
+            pixQrCode: null,
+            pixQrCodeBase64: null,
+            pixExpiresAt: null,
             ...('start' in granted ? { periodStart: granted.start, periodEnd: granted.end } : {}),
           },
         });

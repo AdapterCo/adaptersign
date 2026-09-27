@@ -89,8 +89,8 @@ const envSchema = z
     MERCADOPAGO_API_URL: z.url().default('https://api.mercadopago.com'),
     // Texto na fatura do cartão (até 13 caracteres).
     MERCADOPAGO_STATEMENT_DESCRIPTOR: z.string().max(13).default('ADAPTERSIGN'),
-    // true = usa o link de testes (sandbox_init_point) — só com credenciais de teste.
-    MERCADOPAGO_USE_SANDBOX_URL: bool(false),
+    // Chave PÚBLICA (Public Key) — usada no navegador só para tokenizar o cartão; não é segredo.
+    MERCADOPAGO_PUBLIC_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(20).optional()),
     REPORT_TIMEZONE: z.string().default('America/Sao_Paulo'),
     WEBHOOK_ALLOW_PRIVATE_TARGETS: bool(false),
     WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
@@ -112,8 +112,8 @@ const envSchema = z
   })
   .superRefine((env, ctx) => {
     if (env.BILLING_PROVIDER === 'mercadopago') {
-      if (!env.MERCADOPAGO_ACCESS_TOKEN) {
-        ctx.addIssue({ code: 'custom', path: ['MERCADOPAGO_ACCESS_TOKEN'], message: 'Obrigatório com BILLING_PROVIDER=mercadopago' });
+      for (const key of ['MERCADOPAGO_ACCESS_TOKEN', 'MERCADOPAGO_PUBLIC_KEY'] as const) {
+        if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: 'Obrigatório com BILLING_PROVIDER=mercadopago' });
       }
       if (env.NODE_ENV === 'production' && !env.MERCADOPAGO_WEBHOOK_SECRET) {
         ctx.addIssue({ code: 'custom', path: ['MERCADOPAGO_WEBHOOK_SECRET'], message: 'Obrigatório em produção com BILLING_PROVIDER=mercadopago' });

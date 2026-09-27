@@ -29,6 +29,8 @@ export const RateLimitPolicies = {
   billing_checkout: { limit: 10, windowSeconds: 60 * 60 },
   billing_webhook: { limit: 300, windowSeconds: 60 },
   billing_reconcile: { limit: 6, windowSeconds: 60 },
+  // Tentativas de pagamento (Pix/cartão) por organização — freia teste de cartões.
+  billing_pay: { limit: 10, windowSeconds: 10 * 60 },
 } satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyName = keyof typeof RateLimitPolicies;

@@ -3,17 +3,27 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { APP_CONFIG, type AppConfig } from '../../config/config';
 import { Errors } from '../../common/errors/app-error';
 
-export interface CheckoutRequest {
-  /** Nosso id do pagamento — enviado como external_reference e usado como chave de idempotência. */
+interface PaymentBase {
+  /** Nosso id da cobrança — enviado como external_reference. */
   reference: string;
-  title: string;
+  description: string;
   amountCents: number;
-  currency: string;
-  payerEmail: string;
-  /** Página do app para onde o cliente volta (o status real é sempre consultado no backend). */
-  returnUrl: string;
   notificationUrl: string;
+  /** Chave de idempotência da criação no provedor. */
+  idempotencyKey: string;
+}
+
+export interface PixRequest extends PaymentBase {
+  payerEmail: string;
   expiresAt: Date;
+}
+
+export interface CardRequest extends PaymentBase {
+  /** Token de uso único gerado pelo componente do provedor no navegador (o cartão nunca chega aqui). */
+  token: string;
+  paymentMethodId: string;
+  issuerId: string | null;
+  payer: { email: string; identification: { type: 'CPF' | 'CNPJ'; number: string } | null };
 }
 
 /** Pagamento como informado pelo PROVEDOR (consultado pelo backend, nunca recebido do navegador). */
@@ -29,18 +39,24 @@ export interface ProviderPayment {
   installments: number | null;
   approvedAt: Date | null;
   liveMode: boolean | null;
+  /** Pix: dados para exibir o QR Code (públicos para quem paga). */
+  pix: { qrCode: string; qrCodeBase64: string | null; expiresAt: Date | null } | null;
 }
 
 export type WebhookCheck = 'valid' | 'invalid' | 'unsigned';
 
 /**
- * Provedor de pagamento. Todas as chamadas partem do backend; nenhuma credencial vai ao navegador.
- * Regras de negócio (planos, períodos, limites) não dependem do provedor.
+ * Provedor de pagamento (Checkout Transparente). Todas as transações partem do backend com a
+ * credencial privada; o navegador só recebe a chave PÚBLICA para tokenizar o cartão.
  */
 export interface BillingProvider {
   readonly name: string;
   readonly available: boolean;
-  createCheckout(req: CheckoutRequest): Promise<{ checkoutId: string; url: string }>;
+  /** Chave pública (Public Key) para o componente de cartão no navegador — não é segredo. */
+  readonly publicKey: string | null;
+  createPixPayment(req: PixRequest): Promise<ProviderPayment>;
+  createCardPayment(req: CardRequest): Promise<ProviderPayment>;
+  cancelPayment(paymentId: string): Promise<void>;
   getPayment(paymentId: string): Promise<ProviderPayment | null>;
   findPaymentsByReference(reference: string): Promise<ProviderPayment[]>;
   /** Assinatura da notificação (quando o provedor a envia). */
@@ -49,13 +65,22 @@ export interface BillingProvider {
 
 export const BILLING_PROVIDER = Symbol('BILLING_PROVIDER');
 
+const unavailable = () => Errors.unavailable('BILLING_PROVIDER_NOT_CONFIGURED', 'Pagamento online ainda não está disponível. Contate o suporte.');
+
 /** Sem provedor configurado: contratação online indisponível (planos atribuídos no painel admin). */
 export class ManualBillingProvider implements BillingProvider {
   readonly name = 'manual';
   readonly available = false;
+  readonly publicKey = null;
 
-  createCheckout(): Promise<{ checkoutId: string; url: string }> {
-    return Promise.reject(Errors.unavailable('BILLING_PROVIDER_NOT_CONFIGURED', 'Pagamento online ainda não está disponível. Contate o suporte.'));
+  createPixPayment(): Promise<ProviderPayment> {
+    return Promise.reject(unavailable());
+  }
+  createCardPayment(): Promise<ProviderPayment> {
+    return Promise.reject(unavailable());
+  }
+  cancelPayment(): Promise<void> {
+    return Promise.resolve();
   }
   getPayment(): Promise<ProviderPayment | null> {
     return Promise.resolve(null);
@@ -77,9 +102,10 @@ function header(headers: Record<string, string | string[] | undefined>, name: st
 }
 
 /**
- * Mercado Pago — Checkout Pro (página de pagamento hospedada pelo Mercado Pago).
- * O cartão é digitado apenas na página do Mercado Pago; o backend só usa o Access Token
- * (nunca registrado em log nem devolvido ao cliente). Pix e cartão à vista (1 parcela).
+ * Mercado Pago — Checkout Transparente (API de pagamentos /v1/payments).
+ * Pix: o backend cria o pagamento e devolve o QR Code. Cartão: o backend cria o pagamento com o
+ * token gerado no navegador, sempre à vista (1 parcela) e com o valor definido no servidor.
+ * O Access Token nunca é registrado em log nem devolvido ao cliente.
  */
 export class MercadoPagoBillingProvider implements BillingProvider {
   readonly name = 'mercadopago';
@@ -88,12 +114,13 @@ export class MercadoPagoBillingProvider implements BillingProvider {
 
   constructor(
     private readonly accessToken: string,
+    readonly publicKey: string,
     private readonly webhookSecret: string | null,
-    private readonly opts: { apiUrl: string; statementDescriptor: string; useSandboxUrl: boolean; timeoutMs: number },
+    private readonly opts: { apiUrl: string; statementDescriptor: string; timeoutMs: number },
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  private async call(method: 'GET' | 'POST', path: string, body?: unknown, idempotencyKey?: string): Promise<{ status: number; json: unknown }> {
+  private async call(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown, idempotencyKey?: string): Promise<{ status: number; json: unknown }> {
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.opts.apiUrl.replace(/\/+$/, '')}${path}`, {
@@ -125,35 +152,9 @@ export class MercadoPagoBillingProvider implements BillingProvider {
     return { status: res.status, json };
   }
 
-  async createCheckout(req: CheckoutRequest): Promise<{ checkoutId: string; url: string }> {
-    const body = {
-      items: [{ id: req.reference, title: req.title, quantity: 1, unit_price: req.amountCents / 100, currency_id: req.currency }],
-      payer: { email: req.payerEmail },
-      external_reference: req.reference,
-      notification_url: req.notificationUrl,
-      back_urls: { success: req.returnUrl, pending: req.returnUrl, failure: req.returnUrl },
-      auto_return: 'approved',
-      statement_descriptor: this.opts.statementDescriptor,
-      // Somente Pix e cartão, sempre à vista.
-      payment_methods: {
-        excluded_payment_types: [{ id: 'ticket' }, { id: 'atm' }, { id: 'digital_currency' }],
-        installments: 1,
-        default_installments: 1,
-      },
-      expires: true,
-      expiration_date_to: req.expiresAt.toISOString(),
-    };
-    const { status, json } = await this.call('POST', '/checkout/preferences', body, `pref-${req.reference}`);
-    const r = (json ?? {}) as { id?: unknown; init_point?: unknown; sandbox_init_point?: unknown; message?: unknown };
-    const url = str(this.opts.useSandboxUrl ? r.sandbox_init_point : r.init_point);
-    if (status >= 300 || !r.id || !url) {
-      this.logger.warn({ event: 'mercadopago_preference_failed', status, message: str(r.message) });
-      throw Errors.unavailable('PAYMENT_PROVIDER_ERROR', 'Não foi possível iniciar o pagamento. Tente novamente ou contate o suporte.');
-    }
-    return { checkoutId: String(r.id), url };
-  }
-
   private parsePayment(p: Record<string, unknown>): ProviderPayment {
+    const tx = ((p.point_of_interaction as Record<string, unknown> | undefined)?.transaction_data ?? null) as Record<string, unknown> | null;
+    const qr = tx ? str(tx.qr_code) : null;
     return {
       id: String(p.id),
       status: String(p.status ?? ''),
@@ -166,7 +167,58 @@ export class MercadoPagoBillingProvider implements BillingProvider {
       installments: typeof p.installments === 'number' ? p.installments : null,
       approvedAt: p.date_approved ? new Date(String(p.date_approved)) : null,
       liveMode: typeof p.live_mode === 'boolean' ? p.live_mode : null,
+      pix: qr ? { qrCode: qr, qrCodeBase64: str(tx!.qr_code_base64), expiresAt: p.date_of_expiration ? new Date(String(p.date_of_expiration)) : null } : null,
     };
+  }
+
+  private async createPayment(body: Record<string, unknown>, idempotencyKey: string): Promise<ProviderPayment> {
+    const { status, json } = await this.call('POST', '/v1/payments', body, idempotencyKey);
+    const r = (json ?? {}) as Record<string, unknown>;
+    if (status >= 300 || !r.id) {
+      // Dados do cartão/token inválidos etc. — mensagem genérica; detalhe só no log (sem credenciais).
+      this.logger.warn({ event: 'mercadopago_payment_failed', status, message: str(r.message), cause: JSON.stringify(r.cause ?? null).slice(0, 300) });
+      throw Errors.unprocessable('PAYMENT_NOT_CREATED', 'Não foi possível processar o pagamento. Confira os dados e tente novamente.');
+    }
+    return this.parsePayment(r);
+  }
+
+  createPixPayment(req: PixRequest): Promise<ProviderPayment> {
+    return this.createPayment(
+      {
+        transaction_amount: req.amountCents / 100,
+        description: req.description,
+        payment_method_id: 'pix',
+        payer: { email: req.payerEmail },
+        external_reference: req.reference,
+        notification_url: req.notificationUrl,
+        date_of_expiration: req.expiresAt.toISOString(),
+      },
+      req.idempotencyKey,
+    );
+  }
+
+  createCardPayment(req: CardRequest): Promise<ProviderPayment> {
+    return this.createPayment(
+      {
+        transaction_amount: req.amountCents / 100,
+        description: req.description,
+        token: req.token,
+        installments: 1,
+        payment_method_id: req.paymentMethodId,
+        ...(req.issuerId ? { issuer_id: Number(req.issuerId) } : {}),
+        payer: { email: req.payer.email, ...(req.payer.identification ? { identification: req.payer.identification } : {}) },
+        external_reference: req.reference,
+        notification_url: req.notificationUrl,
+        statement_descriptor: this.opts.statementDescriptor,
+        binary_mode: false,
+      },
+      req.idempotencyKey,
+    );
+  }
+
+  async cancelPayment(paymentId: string): Promise<void> {
+    if (!/^\d{1,30}$/.test(paymentId)) return;
+    await this.call('PUT', `/v1/payments/${paymentId}`, { status: 'cancelled' });
   }
 
   async getPayment(paymentId: string): Promise<ProviderPayment | null> {
@@ -217,10 +269,9 @@ export const billingProvider = {
   inject: [APP_CONFIG],
   useFactory: (config: AppConfig): BillingProvider =>
     config.BILLING_PROVIDER === 'mercadopago'
-      ? new MercadoPagoBillingProvider(config.MERCADOPAGO_ACCESS_TOKEN!, config.MERCADOPAGO_WEBHOOK_SECRET ?? null, {
+      ? new MercadoPagoBillingProvider(config.MERCADOPAGO_ACCESS_TOKEN!, config.MERCADOPAGO_PUBLIC_KEY!, config.MERCADOPAGO_WEBHOOK_SECRET ?? null, {
           apiUrl: config.MERCADOPAGO_API_URL,
           statementDescriptor: config.MERCADOPAGO_STATEMENT_DESCRIPTOR,
-          useSandboxUrl: config.MERCADOPAGO_USE_SANDBOX_URL,
           timeoutMs: 15000,
         })
       : new ManualBillingProvider(),

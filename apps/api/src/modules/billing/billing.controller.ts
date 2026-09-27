@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, Req, Res } from '@nestjs/common';
-import { ApiExcludeEndpoint, ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { IsOptional, Matches } from 'class-validator';
+import { ApiExcludeEndpoint, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { IsEmail, IsIn, IsOptional, Matches, MaxLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { CurrentAuth, Public, RequirePermission, UserOnly } from '../../common/auth/decorators';
 import { Permission, type AuthContext } from '../../common/auth/auth-context';
@@ -21,6 +21,41 @@ class CheckoutDto {
   @IsOptional()
   @Matches(/^[A-Z][A-Z0-9_]{1,30}$/)
   packCode?: string;
+}
+
+/**
+ * Cartão: somente o token de uso único do Mercado Pago e dados do pagador. Valor e parcelas NÃO
+ * são aceitos do navegador (campos extras são recusados) — o backend usa o valor do pedido e 1 parcela.
+ */
+class CardPaymentDto {
+  @ApiProperty({ description: 'Token gerado pelo componente do Mercado Pago' })
+  @Matches(/^[A-Za-z0-9]{16,64}$/)
+  token: string;
+
+  @ApiProperty({ example: 'master' })
+  @Matches(/^[a-z0-9_]{2,30}$/)
+  paymentMethodId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Matches(/^\d{1,20}$/)
+  issuerId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(254)
+  payerEmail?: string;
+
+  @ApiPropertyOptional({ enum: ['CPF', 'CNPJ'] })
+  @IsOptional()
+  @IsIn(['CPF', 'CNPJ'])
+  identificationType?: 'CPF' | 'CNPJ';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Matches(/^[0-9./-]{11,20}$/)
+  identificationNumber?: string;
 }
 
 function firstString(v: unknown): string | null {
@@ -45,10 +80,28 @@ export class BillingController {
   @UserOnly()
   @RequirePermission(Permission.ORG_SETTINGS)
   @Post('checkout')
-  @ApiOperation({ summary: 'Inicia a compra de um plano ou pacote: devolve a URL da página de pagamento (Pix ou cartão à vista)' })
+  @ApiOperation({ summary: 'Cria o pedido de um plano ou pacote (valor definido no servidor); pague em seguida com Pix ou cartão' })
   checkout(@CurrentAuth() auth: AuthContext, @Body() dto: CheckoutDto, @Req() req: Request) {
     if (!!dto.planCode === !!dto.packCode) throw Errors.validation('Informe planCode ou packCode.');
     return this.billing.checkout(auth, dto.planCode ? { planCode: dto.planCode } : { packCode: dto.packCode! }, clientInfo(req));
+  }
+
+  @UserOnly()
+  @RequirePermission(Permission.ORG_SETTINGS)
+  @HttpCode(200)
+  @Post('payments/:id/pix')
+  @ApiOperation({ summary: 'Gera (ou reaproveita) o Pix do pedido — QR Code e copia-e-cola' })
+  pix(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    return this.billing.payWithPix(auth, id, clientInfo(req));
+  }
+
+  @UserOnly()
+  @RequirePermission(Permission.ORG_SETTINGS)
+  @HttpCode(200)
+  @Post('payments/:id/card')
+  @ApiOperation({ summary: 'Paga o pedido com cartão (crédito/débito à vista) usando o token do Mercado Pago' })
+  card(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CardPaymentDto, @Req() req: Request) {
+    return this.billing.payWithCard(auth, id, dto, clientInfo(req));
   }
 
   @RequirePermission(Permission.ORG_SETTINGS)

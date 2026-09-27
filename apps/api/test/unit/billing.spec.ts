@@ -51,8 +51,9 @@ describe('cota de documentos (plano → bônus de 10% → extras)', () => {
   });
 });
 
-describe('MercadoPagoBillingProvider', () => {
+describe('MercadoPagoBillingProvider (Checkout Transparente)', () => {
   const TOKEN = 'APP_USR-token-secreto-de-teste-000000';
+  const PUBLIC = 'APP_USR-chave-publica-de-teste-0000';
   function fakeFetch(status: number, body: unknown) {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fn = (async (url: string, init: RequestInit) => {
@@ -61,69 +62,70 @@ describe('MercadoPagoBillingProvider', () => {
     }) as unknown as typeof fetch;
     return { fn, calls };
   }
-  const opts = { apiUrl: 'https://api.exemplo.test', statementDescriptor: 'ADAPTERSIGN', useSandboxUrl: false, timeoutMs: 5000 };
-  const req = {
+  const opts = { apiUrl: 'https://api.exemplo.test', statementDescriptor: 'ADAPTERSIGN', timeoutMs: 5000 };
+  const base = {
     reference: '0192f0a0-0000-7000-8000-000000000001',
-    title: 'Plano Pro',
+    description: 'Plano Pro',
     amountCents: 4990,
-    currency: 'BRL',
-    payerEmail: 'dono@exemplo.test',
-    returnUrl: 'https://app.exemplo.test/billing?payment=x',
     notificationUrl: 'https://app.exemplo.test/api/v1/billing/webhooks/mercadopago',
-    expiresAt: new Date('2026-09-28T00:00:00Z'),
+    idempotencyKey: 'chave-1',
   };
+  const provider = (fn: typeof fetch, secret: string | null = null) => new MercadoPagoBillingProvider(TOKEN, PUBLIC, secret, opts, fn);
 
-  it('cria a preferência só com Pix/cartão à vista e devolve apenas id e URL', async () => {
+  it('Pix: cria o pagamento no backend e devolve o QR Code', async () => {
     const { fn, calls } = fakeFetch(201, {
-      id: 'pref-1',
-      init_point: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-1',
-      sandbox_init_point: 'https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-1',
+      id: 555,
+      status: 'pending',
+      external_reference: base.reference,
+      transaction_amount: 49.9,
+      currency_id: 'BRL',
+      payment_type_id: 'bank_transfer',
+      payment_method_id: 'pix',
+      date_of_expiration: '2026-09-27T12:30:00.000Z',
+      point_of_interaction: { transaction_data: { qr_code: '00020126...', qr_code_base64: 'iVBORw0KGgo=' } },
     });
-    const p = new MercadoPagoBillingProvider(TOKEN, 'segredo-webhook-123456', opts, fn);
-    await expect(p.createCheckout(req)).resolves.toEqual({ checkoutId: 'pref-1', url: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-1' });
-    expect(calls[0].url).toBe('https://api.exemplo.test/checkout/preferences');
+    const pay = await provider(fn).createPixPayment({ ...base, payerEmail: 'dono@exemplo.test', expiresAt: new Date('2026-09-27T12:30:00Z') });
+    expect(pay).toMatchObject({ id: '555', status: 'pending', amountCents: 4990, pix: { qrCode: '00020126...', qrCodeBase64: 'iVBORw0KGgo=' } });
+    expect(calls[0].url).toBe('https://api.exemplo.test/v1/payments');
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers.Authorization).toBe(`Bearer ${TOKEN}`);
-    expect(headers['X-Idempotency-Key']).toBe(`pref-${req.reference}`);
-    const body = JSON.parse(String(calls[0].init.body));
-    expect(body.items[0]).toMatchObject({ unit_price: 49.9, currency_id: 'BRL', quantity: 1 });
-    expect(body.payment_methods).toEqual({
-      excluded_payment_types: [{ id: 'ticket' }, { id: 'atm' }, { id: 'digital_currency' }],
-      installments: 1,
-      default_installments: 1,
+    expect(headers['X-Idempotency-Key']).toBe('chave-1');
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ transaction_amount: 49.9, payment_method_id: 'pix', external_reference: base.reference });
+  });
+
+  it('Cartão: valor do servidor e sempre 1 parcela', async () => {
+    const { fn, calls } = fakeFetch(201, { id: 777, status: 'approved', external_reference: base.reference, transaction_amount: 49.9, currency_id: 'BRL', installments: 1 });
+    const p = provider(fn);
+    const pay = await p.createCardPayment({
+      ...base,
+      token: 'abcdef0123456789abcdef0123456789',
+      paymentMethodId: 'master',
+      issuerId: '24',
+      payer: { email: 'titular@exemplo.test', identification: { type: 'CPF', number: '52998224725' } },
     });
-    expect(body.external_reference).toBe(req.reference);
+    expect(pay.status).toBe('approved');
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body).toMatchObject({ transaction_amount: 49.9, installments: 1, token: 'abcdef0123456789abcdef0123456789', payment_method_id: 'master', issuer_id: 24 });
+    expect(p.publicKey).toBe(PUBLIC);
   });
 
   it('erro do provedor não expõe a credencial', async () => {
-    const p = new MercadoPagoBillingProvider(TOKEN, null, opts, fakeFetch(400, { message: 'invalid' }).fn);
-    const err = await p.createCheckout(req).catch((e: unknown) => e);
+    const err = await provider(fakeFetch(400, { message: 'invalid token' }).fn)
+      .createCardPayment({ ...base, token: 'x'.repeat(32), paymentMethodId: 'visa', issuerId: null, payer: { email: 'a@b.test', identification: null } })
+      .catch((e: unknown) => e);
     expect(JSON.stringify(err)).not.toContain(TOKEN);
-    expect(String((err as Error).message)).not.toContain(TOKEN);
+    expect((err as { code?: string }).code).toBe('PAYMENT_NOT_CREATED');
   });
 
-  it('converte o pagamento consultado', async () => {
-    const p = new MercadoPagoBillingProvider(
-      TOKEN,
-      null,
-      opts,
-      fakeFetch(200, {
-        id: 123,
-        status: 'approved',
-        external_reference: 'ref',
-        transaction_amount: 49.9,
-        currency_id: 'BRL',
-        payment_type_id: 'credit_card',
-        installments: 1,
-      }).fn,
-    );
-    await expect(p.getPayment('123')).resolves.toMatchObject({ id: '123', status: 'approved', amountCents: 4990, currency: 'BRL', installments: 1 });
+  it('consulta pagamento e ignora ids inválidos', async () => {
+    const p = provider(fakeFetch(200, { id: 123, status: 'approved', external_reference: 'ref', transaction_amount: 49.9, currency_id: 'BRL', payment_type_id: 'credit_card' }).fn);
+    await expect(p.getPayment('123')).resolves.toMatchObject({ id: '123', status: 'approved', amountCents: 4990, pix: null });
     await expect(p.getPayment('../x')).resolves.toBeNull();
   });
 
   it('valida x-signature (HMAC-SHA256 do manifesto)', () => {
     const secret = 'segredo-webhook-123456';
-    const p = new MercadoPagoBillingProvider(TOKEN, secret, opts, fakeFetch(200, {}).fn);
+    const p = provider(fakeFetch(200, {}).fn, secret);
     const ts = '1727400000';
     const v1 = createHmac('sha256', secret).update(`id:123;request-id:req-1;ts:${ts};`).digest('hex');
     expect(p.verifyWebhook({ 'x-signature': `ts=${ts},v1=${v1}`, 'x-request-id': 'req-1' }, '123')).toBe('valid');

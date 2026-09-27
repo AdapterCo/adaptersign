@@ -932,6 +932,11 @@ model BillingPayment {
   currency           String
   periodMonths       Int                  @default(1) @map("period_months")
   providerCheckoutId String?              @map("provider_checkout_id")
+  // Pix em aberto (QR Code exibido na tela até pagar ou expirar). Não é segredo.
+  pixPaymentId       String?              @map("pix_payment_id")
+  pixQrCode          String?              @map("pix_qr_code")
+  pixQrCodeBase64    String?              @map("pix_qr_code_base64")
+  pixExpiresAt       DateTime?            @map("pix_expires_at") @db.Timestamptz(3)
   providerPaymentId  String?              @unique @map("provider_payment_id")
   paymentType        String?              @map("payment_type")
   paymentMethod      String?              @map("payment_method")
