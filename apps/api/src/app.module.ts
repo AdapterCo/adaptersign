@@ -15,6 +15,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { EnvelopesModule } from './modules/envelopes/envelopes.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { SigningModule } from './modules/signing/signing.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
@@ -39,6 +40,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     DocumentsModule,
     TemplatesModule,
     IntegrationsModule,
+    BillingModule,
     EnvelopesModule,
     SigningModule,
     NotificationsModule,

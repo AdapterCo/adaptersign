@@ -126,6 +126,21 @@ enum SubscriptionStatus {
   CANCELLED
 }
 
+enum BillingPaymentKind {
+  PLAN // um período (mês) de plano
+  CREDITS // pacote de documentos extras
+}
+
+enum BillingPaymentStatus {
+  PENDING // checkout criado, aguardando pagamento
+  IN_PROCESS // pagamento em análise/aguardando (ex.: Pix gerado)
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+  REFUNDED // estornado ou contestado (chargeback)
+}
+
 enum UsageMetric {
   ENVELOPES_CREATED
   DOCUMENTS_UPLOADED
@@ -178,18 +193,20 @@ model User {
 }
 
 model Organization {
-  id            String    @id @default(uuid(7)) @db.Uuid
-  name          String
-  slug          String    @unique
+  id                   String    @id @default(uuid(7)) @db.Uuid
+  name                 String
+  slug                 String    @unique
   // White label futuro: campos preparados, não expostos na UI do MVP.
-  brandName     String?   @map("brand_name")
-  brandColor    String?   @map("brand_color")
-  brandLogoKey  String?   @map("brand_logo_key")
+  brandName            String?   @map("brand_name")
+  brandColor           String?   @map("brand_color")
+  brandLogoKey         String?   @map("brand_logo_key")
   // Política de retenção (dias) — null = sem expurgo automático.
-  retentionDays Int?      @map("retention_days")
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)
+  retentionDays        Int?      @map("retention_days")
+  // Documentos (envelopes) extras comprados — não expiram; usados após o plano + bônus do mês.
+  extraDocumentCredits Int       @default(0) @map("extra_document_credits")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz(3)
 
   members      OrganizationMember[]
   documents    Document[]
@@ -200,6 +217,7 @@ model Organization {
   subscription Subscription?
 
   companySignatureAuthorizations CompanySignatureAuthorization[]
+  billingPayments                BillingPayment[]
 
   @@map("organizations")
 }
@@ -851,24 +869,27 @@ model IdempotencyRecord {
 
 // Planos são configuração (tabela), nunca valores fixos no código. Limite null = ilimitado.
 model Plan {
-  id                String   @id @default(uuid(7)) @db.Uuid
-  code              String   @unique
-  name              String
-  monthlyEnvelopes  Int?     @map("monthly_envelopes")
-  monthlyDocuments  Int?     @map("monthly_documents")
-  storageLimitBytes BigInt?  @map("storage_limit_bytes")
-  usersLimit        Int?     @map("users_limit")
-  apiAccess         Boolean  @default(false) @map("api_access")
-  webhooks          Boolean  @default(false)
-  branding          Boolean  @default(false)
-  retentionDays     Int?     @map("retention_days")
-  priceCents        Int?     @map("price_cents")
-  currency          String?
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  code                String   @unique
+  name                String
+  monthlyEnvelopes    Int?     @map("monthly_envelopes")
+  monthlyDocuments    Int?     @map("monthly_documents")
+  storageLimitBytes   BigInt?  @map("storage_limit_bytes")
+  usersLimit          Int?     @map("users_limit")
+  apiAccess           Boolean  @default(false) @map("api_access")
+  webhooks            Boolean  @default(false)
+  branding            Boolean  @default(false)
+  retentionDays       Int?     @map("retention_days")
+  // Brinde ao estourar o limite mensal de envelopes: +N% do contratado (ex.: 10 → 50 + 5).
+  overageBonusPercent Int      @default(0) @map("overage_bonus_percent")
+  priceCents          Int?     @map("price_cents")
+  currency            String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  subscriptions Subscription[]
+  subscriptions   Subscription[]
+  billingPayments BillingPayment[]
 
   @@map("plans")
 }
@@ -890,6 +911,63 @@ model Subscription {
 
   @@index([planId])
   @@map("subscriptions")
+}
+
+// Contratação avulsa (pré-paga) de um período do plano, paga pelo Mercado Pago (Checkout Pro).
+// O id é a external_reference enviada ao provedor. Valor/moeda são fixados na criação e conferidos
+// no pagamento aprovado — o plano só é liberado pelo backend, após consultar o provedor.
+model BillingPayment {
+  id                 String               @id @default(uuid(7)) @db.Uuid
+  organizationId     String               @map("organization_id") @db.Uuid
+  kind               BillingPaymentKind   @default(PLAN)
+  // PLAN: plano contratado. CREDITS: nulo.
+  planId             String?              @map("plan_id") @db.Uuid
+  creditPackId       String?              @map("credit_pack_id") @db.Uuid
+  // CREDITS: documentos (envelopes) extras liberados na aprovação.
+  documents          Int?
+  createdById        String               @map("created_by_id") @db.Uuid
+  provider           String
+  status             BillingPaymentStatus @default(PENDING)
+  amountCents        Int                  @map("amount_cents")
+  currency           String
+  periodMonths       Int                  @default(1) @map("period_months")
+  providerCheckoutId String?              @map("provider_checkout_id")
+  providerPaymentId  String?              @unique @map("provider_payment_id")
+  paymentType        String?              @map("payment_type")
+  paymentMethod      String?              @map("payment_method")
+  statusDetail       String?              @map("status_detail")
+  approvedAt         DateTime?            @map("approved_at") @db.Timestamptz(3)
+  periodStart        DateTime?            @map("period_start") @db.Timestamptz(3)
+  periodEnd          DateTime?            @map("period_end") @db.Timestamptz(3)
+  expiresAt          DateTime             @map("expires_at") @db.Timestamptz(3)
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plan         Plan?        @relation(fields: [planId], references: [id], onDelete: Restrict)
+  creditPack   CreditPack?  @relation(fields: [creditPackId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+  @@index([status, expiresAt])
+  @@map("billing_payments")
+}
+
+// Pacote de documentos extras (configuração, como os planos). Créditos não expiram e só são
+// consumidos depois do limite do plano + bônus do mês.
+model CreditPack {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  code       String   @unique
+  name       String
+  documents  Int
+  priceCents Int      @map("price_cents")
+  currency   String   @default("BRL")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  billingPayments BillingPayment[]
+
+  @@map("credit_packs")
 }
 
 // period: "YYYY-MM" (UTC) para métricas mensais; "total" para STORAGE_BYTES.

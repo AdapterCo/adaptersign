@@ -26,6 +26,9 @@ export const RateLimitPolicies = {
   api_key: { limit: 600, windowSeconds: 60 },
   user_default: { limit: 300, windowSeconds: 60 },
   webhook_manage: { limit: 30, windowSeconds: 60 },
+  billing_checkout: { limit: 10, windowSeconds: 60 * 60 },
+  billing_webhook: { limit: 300, windowSeconds: 60 },
+  billing_reconcile: { limit: 6, windowSeconds: 60 },
 } satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyName = keyof typeof RateLimitPolicies;

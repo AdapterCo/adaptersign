@@ -22,11 +22,20 @@ const planSchema = z.object({
   webhooks: z.boolean(),
   branding: z.boolean(),
   retentionDays: z.number().int().min(1).nullable(),
+  overageBonusPercent: z.number().int().min(0).max(100).optional(),
   priceCents: z.number().int().min(0).nullable().optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).nullable().optional(),
   active: z.boolean().optional(),
 });
-const fileSchema = z.object({ plans: z.array(planSchema).min(1) });
+const packSchema = z.object({
+  code: z.string().regex(/^[A-Z][A-Z0-9_]{1,30}$/),
+  name: z.string().min(2),
+  documents: z.number().int().min(1),
+  priceCents: z.number().int().min(1),
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  active: z.boolean().optional(),
+});
+const fileSchema = z.object({ plans: z.array(planSchema).min(1), creditPacks: z.array(packSchema).optional() });
 
 async function main(): Promise<void> {
   const path = process.argv[2];
@@ -46,6 +55,7 @@ async function main(): Promise<void> {
       webhooks: p.webhooks,
       branding: p.branding,
       retentionDays: p.retentionDays,
+      overageBonusPercent: p.overageBonusPercent ?? 0,
       priceCents: p.priceCents ?? null,
       currency: p.currency ?? null,
       active: p.active ?? true,
@@ -59,6 +69,18 @@ async function main(): Promise<void> {
       });
     });
     process.stdout.write(`plano sincronizado: ${p.code}\n`);
+  }
+  for (const k of parsed.creditPacks ?? []) {
+    const data = { name: k.name, documents: k.documents, priceCents: k.priceCents, currency: k.currency ?? 'BRL', active: k.active ?? true };
+    await prisma.tx(async (tx) => {
+      const pack = await tx.creditPack.upsert({ where: { code: k.code }, create: { code: k.code, ...data }, update: data });
+      await audit.record(tx, {
+        eventType: AuditEventType.PLATFORM_PLAN_CHANGED,
+        actor: { type: ActorType.SYSTEM, id: 'cli:plans-sync' },
+        metadata: { creditPackId: pack.id, ...k },
+      });
+    });
+    process.stdout.write(`pacote sincronizado: ${k.code}\n`);
   }
   await app.close();
 }

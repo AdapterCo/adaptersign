@@ -15,6 +15,7 @@ async function main(): Promise<void> {
 
   const file = JSON.parse(readFileSync(join(__dirname, '..', 'config', 'plans.example.json'), 'utf8')) as {
     plans: Array<Record<string, unknown> & { code: string; storageLimitBytes: string | null }>;
+    creditPacks?: Array<{ code: string; name: string; documents: number; priceCents: number }>;
   };
   for (const p of file.plans) {
     const data = {
@@ -27,8 +28,15 @@ async function main(): Promise<void> {
       webhooks: Boolean(p.webhooks),
       branding: Boolean(p.branding),
       retentionDays: (p.retentionDays as number | null) ?? null,
+      overageBonusPercent: (p.overageBonusPercent as number | undefined) ?? 0,
+      priceCents: (p.priceCents as number | undefined) ?? null,
+      currency: (p.currency as string | undefined) ?? null,
     };
     await prisma.plan.upsert({ where: { code: p.code }, create: { code: p.code, ...data }, update: data });
+  }
+  for (const k of file.creditPacks ?? []) {
+    const data = { name: k.name, documents: k.documents, priceCents: k.priceCents };
+    await prisma.creditPack.upsert({ where: { code: k.code }, create: { code: k.code, ...data }, update: data });
   }
 
   const email = 'dev@exemplo.test';

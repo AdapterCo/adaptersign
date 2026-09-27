@@ -12,7 +12,8 @@ export class PlansService {
   ) {}
 
   /**
-   * Plano vigente: assinatura ativa/trial; caso contrário o plano padrão configurado.
+   * Plano vigente: assinatura ativa/trial e dentro do período pago (sem fim = sem vencimento, ex.:
+   * atribuída no painel); caso contrário o plano padrão configurado.
    * Planos vêm do banco (configuração), nunca de valores fixos no código.
    */
   async planForOrganization(organizationId: string, client: Tx | PrismaService = this.prisma): Promise<Plan> {
@@ -20,7 +21,8 @@ export class PlansService {
       where: { organizationId },
       include: { plan: true },
     });
-    if (sub && (sub.status === 'ACTIVE' || sub.status === 'TRIALING') && sub.plan.active) return sub.plan;
+    const inPeriod = !sub?.currentPeriodEnd || sub.currentPeriodEnd > new Date();
+    if (sub && (sub.status === 'ACTIVE' || sub.status === 'TRIALING') && sub.plan.active && inPeriod) return sub.plan;
     const fallback = await client.plan.findUnique({ where: { code: this.config.DEFAULT_PLAN_CODE } });
     if (!fallback) {
       throw Errors.unavailable(
@@ -29,5 +31,10 @@ export class PlansService {
       );
     }
     return fallback;
+  }
+
+  /** Plano pago (não é o plano padrão/gratuito). */
+  isPaidPlan(plan: Plan): boolean {
+    return plan.code !== this.config.DEFAULT_PLAN_CODE;
   }
 }

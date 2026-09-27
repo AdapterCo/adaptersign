@@ -4,6 +4,7 @@ import type { Tx } from '../../infra/prisma/prisma.service';
 import { Errors } from '../../common/errors/app-error';
 import { PlansService } from './plans.service';
 import { UsageService } from './usage.service';
+import { envelopeQuota, type QuotaSource } from './billing-period';
 
 /**
  * Aplicação de limites do plano. Deve ser chamada dentro da transação da operação,
@@ -20,14 +21,36 @@ export class LimitsService {
     await tx.$queryRaw`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId}::uuid FOR UPDATE`;
   }
 
-  async assertCanCreateEnvelope(tx: Tx, organizationId: string): Promise<void> {
+  /**
+   * Reserva a cota do próximo envelope (na transação da criação, com a organização travada):
+   * plano → bônus do mês (+N%) → documentos extras comprados (debitados aqui; se a transação
+   * falhar, o débito é desfeito junto).
+   */
+  async assertCanCreateEnvelope(tx: Tx, organizationId: string): Promise<QuotaSource> {
     await this.lockOrganization(tx, organizationId);
     const plan = await this.plans.planForOrganization(organizationId, tx);
-    if (plan.monthlyEnvelopes === null) return;
-    const used = await this.usage.current(organizationId, UsageMetric.ENVELOPES_CREATED, tx);
-    if (used >= BigInt(plan.monthlyEnvelopes)) {
-      throw Errors.planLimit('Limite mensal de envelopes do plano atingido.', { limit: plan.monthlyEnvelopes });
+    if (plan.monthlyEnvelopes === null) return 'unlimited';
+    const [used, org] = await Promise.all([
+      this.usage.current(organizationId, UsageMetric.ENVELOPES_CREATED, tx),
+      tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { extraDocumentCredits: true } }),
+    ]);
+    const quota = envelopeQuota(plan, Number(used), org.extraDocumentCredits);
+    if (quota.next === 'credit') {
+      const debited = await tx.organization.updateMany({
+        where: { id: organizationId, extraDocumentCredits: { gt: 0 } },
+        data: { extraDocumentCredits: { decrement: 1 } },
+      });
+      if (debited.count === 1) return 'credit';
+    } else if (quota.next) {
+      return quota.next;
     }
+    const paid = this.plans.isPaidPlan(plan);
+    throw Errors.planLimit(
+      paid
+        ? 'Você usou todos os documentos do plano e o bônus deste mês. Compre documentos extras para continuar.'
+        : 'Limite mensal de documentos do plano atingido. Contrate um plano para continuar.',
+      { limit: quota.limit, bonus: quota.bonus, used: quota.used, extra_credits: quota.credits, can_buy_extra: paid },
+    );
   }
 
   async assertCanUploadDocument(tx: Tx, organizationId: string, sizeBytes: number): Promise<void> {

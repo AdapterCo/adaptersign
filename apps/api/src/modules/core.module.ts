@@ -5,7 +5,7 @@ import { RateLimitService } from '../common/rate-limit/rate-limit';
 import { PlansService } from './billing/plans.service';
 import { UsageService } from './billing/usage.service';
 import { LimitsService } from './billing/limits.service';
-import { BILLING_PROVIDER, ManualBillingProvider } from './billing/billing-provider';
+import { BILLING_PROVIDER, billingProvider } from './billing/billing-provider';
 import { LegalService } from './legal/legal.service';
 
 /** Serviços transversais usados por API e worker. */
@@ -19,7 +19,7 @@ import { LegalService } from './legal/legal.service';
     UsageService,
     LimitsService,
     LegalService,
-    { provide: BILLING_PROVIDER, useClass: ManualBillingProvider },
+    billingProvider,
   ],
   exports: [AuditService, OutboxService, RateLimitService, PlansService, UsageService, LimitsService, LegalService, BILLING_PROVIDER],
 })

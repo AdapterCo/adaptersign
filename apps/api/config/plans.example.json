@@ -1,10 +1,15 @@
 {
-  "$comment": "Exemplo de configuração de planos. Valores ilustrativos — defina limites e preços reais no arquivo de produção (fora do repositório). null = ilimitado.",
+  "$comment": "Planos e pacotes (configuração). Preços em centavos (BRL). monthlyEnvelopes = documentos enviados para assinatura por mês; overageBonusPercent = brinde ao estourar o limite (+N% do contratado). creditPacks = documentos extras: não expiram, só para quem tem plano pago. null = ilimitado. Sincronize com: node dist/cli/plans-sync.js <arquivo>",
   "plans": [
-    { "code": "FREE", "name": "Free", "monthlyEnvelopes": 5, "monthlyDocuments": 10, "storageLimitBytes": "104857600", "usersLimit": 1, "apiAccess": false, "webhooks": false, "branding": false, "retentionDays": null },
-    { "code": "STARTER", "name": "Starter", "monthlyEnvelopes": 50, "monthlyDocuments": 100, "storageLimitBytes": "2147483648", "usersLimit": 3, "apiAccess": false, "webhooks": false, "branding": false, "retentionDays": null },
-    { "code": "PRO", "name": "Pro", "monthlyEnvelopes": 300, "monthlyDocuments": 600, "storageLimitBytes": "10737418240", "usersLimit": 10, "apiAccess": true, "webhooks": true, "branding": false, "retentionDays": null },
-    { "code": "BUSINESS", "name": "Business", "monthlyEnvelopes": 1500, "monthlyDocuments": 3000, "storageLimitBytes": "53687091200", "usersLimit": 50, "apiAccess": true, "webhooks": true, "branding": true, "retentionDays": null },
+    { "code": "FREE", "name": "Free", "monthlyEnvelopes": 5, "monthlyDocuments": 10, "storageLimitBytes": "104857600", "usersLimit": 1, "apiAccess": false, "webhooks": false, "branding": false, "retentionDays": null, "overageBonusPercent": 0 },
+    { "code": "STARTER", "name": "Essencial", "monthlyEnvelopes": 50, "monthlyDocuments": null, "storageLimitBytes": "2147483648", "usersLimit": 3, "apiAccess": true, "webhooks": true, "branding": false, "retentionDays": null, "overageBonusPercent": 10, "priceCents": 5900, "currency": "BRL" },
+    { "code": "PRO", "name": "Profissional", "monthlyEnvelopes": 100, "monthlyDocuments": null, "storageLimitBytes": "10737418240", "usersLimit": 10, "apiAccess": true, "webhooks": true, "branding": false, "retentionDays": null, "overageBonusPercent": 10, "priceCents": 11900, "currency": "BRL" },
+    { "code": "BUSINESS", "name": "Empresarial", "monthlyEnvelopes": 200, "monthlyDocuments": null, "storageLimitBytes": "53687091200", "usersLimit": 50, "apiAccess": true, "webhooks": true, "branding": true, "retentionDays": null, "overageBonusPercent": 10, "priceCents": 19900, "currency": "BRL" },
     { "code": "ENTERPRISE", "name": "Enterprise", "monthlyEnvelopes": null, "monthlyDocuments": null, "storageLimitBytes": null, "usersLimit": null, "apiAccess": true, "webhooks": true, "branding": true, "retentionDays": null }
+  ],
+  "creditPacks": [
+    { "code": "EXTRA_10", "name": "10 documentos extras", "documents": 10, "priceCents": 1500 },
+    { "code": "EXTRA_25", "name": "25 documentos extras", "documents": 25, "priceCents": 3500 },
+    { "code": "EXTRA_50", "name": "50 documentos extras", "documents": 50, "priceCents": 6500 }
   ]
 }

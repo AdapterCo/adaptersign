@@ -79,6 +79,18 @@ const envSchema = z
     REMINDER_MAX_COUNT: z.coerce.number().int().min(0).default(3),
 
     DEFAULT_PLAN_CODE: z.string().default('FREE'),
+
+    // Contratação de planos. "manual" = sem pagamento online (planos atribuídos no painel admin).
+    BILLING_PROVIDER: z.enum(['manual', 'mercadopago']).default('manual'),
+    // Credenciais do Mercado Pago: SOMENTE no servidor (nunca expostas ao navegador).
+    MERCADOPAGO_ACCESS_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(20).optional()),
+    // Chave secreta das notificações (Suas integrações → Webhooks) — valida o cabeçalho x-signature.
+    MERCADOPAGO_WEBHOOK_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(16).optional()),
+    MERCADOPAGO_API_URL: z.url().default('https://api.mercadopago.com'),
+    // Texto na fatura do cartão (até 13 caracteres).
+    MERCADOPAGO_STATEMENT_DESCRIPTOR: z.string().max(13).default('ADAPTERSIGN'),
+    // true = usa o link de testes (sandbox_init_point) — só com credenciais de teste.
+    MERCADOPAGO_USE_SANDBOX_URL: bool(false),
     REPORT_TIMEZONE: z.string().default('America/Sao_Paulo'),
     WEBHOOK_ALLOW_PRIVATE_TARGETS: bool(false),
     WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
@@ -99,6 +111,14 @@ const envSchema = z
       .default('ADP'),
   })
   .superRefine((env, ctx) => {
+    if (env.BILLING_PROVIDER === 'mercadopago') {
+      if (!env.MERCADOPAGO_ACCESS_TOKEN) {
+        ctx.addIssue({ code: 'custom', path: ['MERCADOPAGO_ACCESS_TOKEN'], message: 'Obrigatório com BILLING_PROVIDER=mercadopago' });
+      }
+      if (env.NODE_ENV === 'production' && !env.MERCADOPAGO_WEBHOOK_SECRET) {
+        ctx.addIssue({ code: 'custom', path: ['MERCADOPAGO_WEBHOOK_SECRET'], message: 'Obrigatório em produção com BILLING_PROVIDER=mercadopago' });
+      }
+    }
     if (env.WHATSAPP_PROVIDER === 'evolution') {
       for (const key of ['EVOLUTION_API_URL', 'EVOLUTION_API_KEY', 'EVOLUTION_INSTANCE'] as const) {
         if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: `${key} é obrigatório com WHATSAPP_PROVIDER=evolution` });

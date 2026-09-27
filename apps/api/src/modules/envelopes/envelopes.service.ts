@@ -118,7 +118,7 @@ export class EnvelopesService {
     const expiresAt = this.parseExpiry(dto.expiresAt);
     const events: EmittedEvent[] = [];
     const id = await this.prisma.tx(async (tx) => {
-      await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
+      const quota = await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
       const envelope = await this.createWithUniqueCode(tx, {
         organizationId: auth.organizationId,
         title: cleanText(dto.title),
@@ -136,7 +136,7 @@ export class EnvelopesService {
         organizationId: auth.organizationId,
         envelopeId: envelope.id,
         ...client,
-        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt: envelope.expiresAt, externalRef: envelope.externalRef },
+        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt: envelope.expiresAt, externalRef: envelope.externalRef, quota },
       });
       for (const d of dto.documents ?? []) await this.addDocumentTx(tx, auth, envelope.id, d, client);
       for (const s of dto.signers ?? []) await this.addSignerTx(tx, auth, envelope.id, s, client);
@@ -162,7 +162,7 @@ export class EnvelopesService {
     const expiresAt = this.parseExpiry(input.expiresAt);
     const events: EmittedEvent[] = [];
     const id = await this.prisma.tx(async (tx) => {
-      await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
+      const quota = await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
       const envelope = await this.createWithUniqueCode(tx, {
         organizationId: auth.organizationId,
         title: cleanText(input.title),
@@ -180,7 +180,7 @@ export class EnvelopesService {
         organizationId: auth.organizationId,
         envelopeId: envelope.id,
         ...client,
-        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt, externalRef: input.externalRef, templateId: input.templateId },
+        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt, externalRef: input.externalRef, templateId: input.templateId, quota },
       });
       await this.addDocumentTx(tx, auth, envelope.id, { documentId: input.documentId }, client);
       const envelopeDocument = await tx.envelopeDocument.findFirstOrThrow({ where: { envelopeId: envelope.id }, select: { id: true } });
