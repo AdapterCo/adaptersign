@@ -116,6 +116,11 @@ export function ErrorMessage({ error }: { error: unknown }) {
   return (
     <Alert tone="bad">
       <p>{e?.message ?? t.common.errorGeneric}</p>
+      {e?.code === 'PLAN_LIMIT_REACHED' && (
+        <a href="/billing" className="mt-1 inline-block font-semibold underline">
+          {t.billing.limitLink}
+        </a>
+      )}
       {e?.requestId && <p className="mt-1 text-xs opacity-80">{t.common.requestId(e.requestId)}</p>}
     </Alert>
   );

@@ -21,6 +21,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { href: '/envelopes', label: t.nav.envelopes },
     { href: '/documents', label: t.nav.documents },
     ...(me?.permissions.includes('template:read') ? [{ href: '/templates', label: t.nav.templates }] : []),
+    { href: '/billing', label: t.nav.billing },
     { href: '/settings', label: t.nav.settings },
     ...(me?.user.isPlatformAdmin ? [{ href: '/admin', label: t.nav.admin }] : []),
   ];
