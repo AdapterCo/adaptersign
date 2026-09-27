@@ -396,7 +396,11 @@ describe('Fluxo completo de assinatura (E2E)', () => {
     // Documento que subiu errado, usado só num rascunho: excluído e retirado do rascunho.
     const wrong = await post(ownerA, '/api/v1/documents').attach('file', await samplePdf(), { filename: 'errado.pdf', contentType: 'application/pdf' }).expect(201);
     const draft = await post(ownerA, '/api/v1/envelopes').send({ title: `Rascunho ${run}`, documents: [{ documentId: wrong.body.id }] }).expect(201);
+    // Regressão: contador de armazenamento menor que o arquivo não pode quebrar a exclusão.
+    const orgA = (await ownerA.get('/api/v1/organizations/current').expect(200)).body.id as string;
+    await prisma.usageRecord.updateMany({ where: { organizationId: orgA, metric: 'STORAGE_BYTES' }, data: { quantity: 0n } });
     await ownerA.delete(`/api/v1/documents/${wrong.body.id}`).set('Origin', ORIGIN).expect(200);
+    expect((await prisma.usageRecord.findFirst({ where: { organizationId: orgA, metric: 'STORAGE_BYTES' } }))?.quantity).toBe(0n);
     expect((await ownerA.get(`/api/v1/envelopes/${draft.body.id}`).expect(200)).body.documents).toHaveLength(0);
     await ownerA.get(`/api/v1/documents/${wrong.body.id}`).expect(404);
 

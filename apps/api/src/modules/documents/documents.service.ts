@@ -272,7 +272,7 @@ export class DocumentsService {
       const removed = await tx.envelopeDocument.deleteMany({ where: { documentVersion: { documentId: doc.id }, envelope: { status: 'DRAFT' } } });
       await tx.document.update({ where: { id: doc.id }, data: { deletedAt: new Date() } });
       const bytes = doc.versions.reduce((sum, v) => sum + v.sizeBytes, 0n);
-      if (bytes > 0n) await this.usage.increment(tx, auth.organizationId, UsageMetric.STORAGE_BYTES, -bytes);
+      if (bytes > 0n) await this.usage.decrement(tx, auth.organizationId, UsageMetric.STORAGE_BYTES, bytes);
       await this.audit.record(tx, {
         eventType: AuditEventType.DOCUMENT_DELETED,
         actor: actorOf(auth),

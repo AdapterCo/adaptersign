@@ -22,6 +22,16 @@ export class UsageService {
       DO UPDATE SET "quantity" = "usage_records"."quantity" + EXCLUDED."quantity", "updated_at" = now()`;
   }
 
+  /**
+   * Decremento que nunca deixa o contador negativo (ex.: devolver espaço de um documento excluído
+   * quando o contador é menor que o arquivo — uploads anteriores ao controle ou ajustes manuais).
+   */
+  async decrement(client: Tx | PrismaService, organizationId: string, metric: UsageMetric, quantity: bigint): Promise<void> {
+    await client.$executeRaw`
+      UPDATE "usage_records" SET "quantity" = GREATEST("quantity" - ${quantity}, 0), "updated_at" = now()
+      WHERE "organization_id" = ${organizationId}::uuid AND "metric" = ${metric}::"UsageMetric" AND "period" = ${usagePeriod(metric)}`;
+  }
+
   async current(organizationId: string, metric: UsageMetric, client: Tx | PrismaService = this.prisma): Promise<bigint> {
     const row = await client.usageRecord.findUnique({
       where: { organizationId_metric_period: { organizationId, metric, period: usagePeriod(metric) } },
