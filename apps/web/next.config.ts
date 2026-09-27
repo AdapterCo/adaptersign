@@ -22,6 +22,23 @@ const csp = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+// Somente na página de pagamento: componente de cartão do Mercado Pago (tokenização no navegador).
+const MP = 'https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com';
+const billingCsp = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://sdk.mercadopago.com https://http2.mlstatic.com",
+  `style-src 'self' 'unsafe-inline' ${MP}`,
+  `img-src 'self' data: blob: ${MP}`,
+  `font-src 'self' data: ${MP}`,
+  `connect-src 'self' https://api.mercadopago.com https://api.mercadolibre.com ${MP}`,
+  `frame-src ${MP}`,
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 const nextConfig: NextConfig = {
   output: 'standalone',
   // Monorepo: raiz explícita para o tracing (standalone em .next/standalone/apps/web/server.js).
@@ -43,6 +60,8 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
+      // Declarado depois: sobrepõe a CSP geral apenas em /billing.
+      { source: '/billing', headers: [{ key: 'Content-Security-Policy', value: billingCsp }] },
     ];
   },
 };

@@ -1,16 +1,17 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useState } from 'react';
 import { api, type Paginated } from '@/lib/api';
 import { t } from '@/lib/i18n';
 import { formatDate, formatDateTime } from '@/lib/format';
 import { useApi } from '@/lib/use-api';
 import { useSession } from '@/components/session';
+import { PaymentPanel } from '@/components/payment-panel';
 import { Alert, Button, Card, ErrorMessage, PageHeader, Spinner } from '@/components/ui';
 
 interface Overview {
   onlinePayment: boolean;
+  publicKey: string | null;
   current: { code: string; name: string; paid: boolean; periodEnd: string | null; expired: boolean };
   quota: { limit: number | null; bonus: number; used: number; credits: number; next: 'plan' | 'bonus' | 'credit' | 'unlimited' | null };
   plans: Array<{
@@ -36,51 +37,19 @@ interface Payment {
   approvedAt: string | null;
   periodEnd: string | null;
   createdAt: string;
+  payable: boolean;
 }
 
 const brl = (cents: number) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-/** Situação do pagamento ao voltar do Mercado Pago — sempre consultada no backend. */
-function ReturnStatus({ paymentId, onSettled }: { paymentId: string; onSettled: () => void }) {
-  const [payment, setPayment] = useState<Payment | null>(null);
-  useEffect(() => {
-    let stop = false;
-    let tries = 0;
-    const poll = async () => {
-      try {
-        const p = await api<Payment>(`/billing/payments/${paymentId}`);
-        if (stop) return;
-        setPayment(p);
-        if (p.status === 'PENDING' || p.status === 'IN_PROCESS') {
-          if (++tries < 40) setTimeout(() => void poll(), 5000);
-        } else {
-          onSettled();
-        }
-      } catch {
-        /* sem acesso ou inexistente: nada a mostrar */
-      }
-    };
-    void poll();
-    return () => {
-      stop = true;
-    };
-  }, [paymentId, onSettled]);
-  if (!payment) return null;
-  if (payment.status === 'APPROVED') {
-    return <Alert tone="ok">{payment.kind === 'PLAN' ? t.billing.approvedPlan(payment.plan?.name ?? '') : t.billing.approvedCredits(payment.documents ?? 0)}</Alert>;
-  }
-  if (payment.status === 'PENDING' || payment.status === 'IN_PROCESS') return <Alert tone="info">{t.billing.waiting}</Alert>;
-  return <Alert tone="warn">{t.billing.notApproved}</Alert>;
-}
-
 function Billing() {
-  const { can } = useSession();
+  const { can, me } = useSession();
   const manage = can('org:settings');
-  const returned = useSearchParams().get('payment');
   const { data, error, reload } = useApi<Overview>('/billing');
   const { data: history, reload: reloadHistory } = useApi<Paginated<Payment>>(manage ? '/billing/payments?pageSize=10' : null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
+  const [order, setOrder] = useState<{ paymentId: string; title: string; amountCents: number } | null>(null);
   const refresh = useCallback(() => {
     void reload();
     void reloadHistory();
@@ -90,11 +59,13 @@ function Billing() {
     setBusy(key);
     setActionError(null);
     try {
-      // O backend cria a cobrança no Mercado Pago e devolve apenas a URL da página de pagamento.
-      const r = await api<{ paymentId: string; url: string }>('/billing/checkout', { method: 'POST', body });
-      window.location.assign(r.url);
+      // Pedido criado no backend (valor definido lá); o pagamento é feito no painel abaixo.
+      const r = await api<{ paymentId: string; amountCents: number; description: string }>('/billing/checkout', { method: 'POST', body });
+      setOrder({ paymentId: r.paymentId, title: r.description, amountCents: r.amountCents });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setActionError(err);
+    } finally {
       setBusy(null);
     }
   }
@@ -109,8 +80,17 @@ function Billing() {
     <>
       <PageHeader title={t.billing.title} />
       <div className="flex flex-col gap-6">
-        {returned && (
-          <ReturnStatus paymentId={returned} onSettled={refresh} />
+        {order && (
+          <PaymentPanel
+            key={order.paymentId}
+            paymentId={order.paymentId}
+            title={order.title}
+            amountCents={order.amountCents}
+            publicKey={data.publicKey}
+            payerEmail={me?.user.email ?? ''}
+            onPaid={refresh}
+            onClose={() => setOrder(null)}
+          />
         )}
 
         <Card title={t.billing.current}>
@@ -219,9 +199,22 @@ function Billing() {
                       {p.periodEnd && ` · ${t.billing.validUntil(formatDate(p.periodEnd))}`}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-semibold">{brl(p.amountCents)}</p>
-                    <p className="text-xs">{t.billing.status[p.status] ?? p.status}</p>
+                  <div className="flex items-center gap-3 text-right">
+                    <div>
+                      <p className="font-semibold">{brl(p.amountCents)}</p>
+                      <p className="text-xs">{t.billing.status[p.status] ?? p.status}</p>
+                    </div>
+                    {p.payable && p.status !== 'APPROVED' && (
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setOrder({ paymentId: p.id, title: p.kind === 'PLAN' ? t.billing.planItem(p.plan?.name ?? '') : t.billing.packDocs(p.documents ?? 0), amountCents: p.amountCents });
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                      >
+                        {t.billing.pay}
+                      </Button>
+                    )}
                   </div>
                 </li>
               ))}
