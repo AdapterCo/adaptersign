@@ -254,6 +254,11 @@ export class ListEnvelopesQuery extends PaginationQueryDto {
   @MaxLength(200)
   search?: string;
 
+  @ApiPropertyOptional({ enum: ['true', 'false'], description: 'true = somente arquivados (padrão: não arquivados)' })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  archived?: 'true' | 'false';
+
   @ApiPropertyOptional({ enum: ['integration', 'manual'], description: 'integration = criado por API key' })
   @IsOptional()
   @IsIn(['integration', 'manual'])

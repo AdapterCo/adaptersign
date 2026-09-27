@@ -15,6 +15,8 @@ export interface EnvelopeFilters {
   representative?: string;
   from?: string;
   to?: string;
+  /** "true" = somente arquivados; padrão = somente não arquivados. */
+  archived?: 'true' | 'false';
 }
 
 /**
@@ -26,7 +28,7 @@ export function buildEnvelopeWhere(
   f: EnvelopeFilters,
   cpf: { filter?: string | null; fromSearch?: string | null } = {},
 ): Prisma.EnvelopeWhereInput {
-  const and: Prisma.EnvelopeWhereInput[] = [{ organizationId }];
+  const and: Prisma.EnvelopeWhereInput[] = [{ organizationId, deletedAt: null, archivedAt: f.archived === 'true' ? { not: null } : null }];
   if (f.status) and.push({ status: f.status });
   if (f.externalRef) and.push({ externalRef: f.externalRef });
   if (f.origin === 'integration') and.push({ createdByApiKeyId: { not: null } });

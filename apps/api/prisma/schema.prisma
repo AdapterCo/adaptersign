@@ -357,6 +357,10 @@ model Envelope {
   // Marcado quando todos os signatários obrigatórios concluíram; a finalização
   // (evidências + COMPLETED) é feita pelo worker de forma atômica.
   finalizationRequestedAt DateTime?      @map("finalization_requested_at") @db.Timestamptz(3)
+  // Rascunho descartado pelo usuário (some de todas as listas; nunca foi enviado).
+  deletedAt               DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  // Envelope finalizado arquivado (some da lista padrão, continua guardado e verificável).
+  archivedAt              DateTime?      @map("archived_at") @db.Timestamptz(3)
   // Referência do sistema de origem (ex.: número do contrato/venda) — correlação de integrações.
   externalRef             String?        @map("external_ref")
   // Modelo usado na criação (se houver).
@@ -375,6 +379,7 @@ model Envelope {
   @@index([organizationId, createdAt])
   @@index([status, expiresAt])
   @@index([organizationId, externalRef])
+  @@index([organizationId, deletedAt, archivedAt])
   @@map("envelopes")
 }
 

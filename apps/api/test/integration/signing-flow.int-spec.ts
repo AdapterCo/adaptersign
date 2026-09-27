@@ -388,6 +388,34 @@ describe('Fluxo completo de assinatura (E2E)', () => {
     await api().post(`/api/v1/envelopes/${created.body.id}/signers/${loja.id}/link`).set(bearer).expect(409);
   });
 
+  it('exclusão e arquivamento: só o que nunca foi enviado é excluído; finalizados são arquivados', async () => {
+    // Documento de envelope enviado é prova: não pode ser excluído.
+    const inUse = await ownerA.delete(`/api/v1/documents/${documentId}`).set('Origin', ORIGIN).expect(422);
+    expect(inUse.body.error.code).toBe('DOCUMENT_IN_USE');
+
+    // Documento que subiu errado, usado só num rascunho: excluído e retirado do rascunho.
+    const wrong = await post(ownerA, '/api/v1/documents').attach('file', await samplePdf(), { filename: 'errado.pdf', contentType: 'application/pdf' }).expect(201);
+    const draft = await post(ownerA, '/api/v1/envelopes').send({ title: `Rascunho ${run}`, documents: [{ documentId: wrong.body.id }] }).expect(201);
+    await ownerA.delete(`/api/v1/documents/${wrong.body.id}`).set('Origin', ORIGIN).expect(200);
+    expect((await ownerA.get(`/api/v1/envelopes/${draft.body.id}`).expect(200)).body.documents).toHaveLength(0);
+    await ownerA.get(`/api/v1/documents/${wrong.body.id}`).expect(404);
+
+    // Rascunho excluído some; envelope enviado não pode ser excluído.
+    await ownerA.delete(`/api/v1/envelopes/${draft.body.id}`).set('Origin', ORIGIN).expect(200);
+    await ownerA.get(`/api/v1/envelopes/${draft.body.id}`).expect(404);
+    expect((await ownerA.delete(`/api/v1/envelopes/${envelopeId}`).set('Origin', ORIGIN).expect(409)).body.error.code).toBe('ENVELOPE_NOT_DRAFT');
+
+    // Concluído: arquivado sai da lista padrão, aparece em "arquivados" e continua verificável.
+    await post(ownerA, `/api/v1/envelopes/${envelopeId}/archive`).send({}).expect(200);
+    const list = await ownerA.get('/api/v1/envelopes?pageSize=100').expect(200);
+    expect(list.body.data.map((e: { id: string }) => e.id)).not.toContain(envelopeId);
+    const archived = await ownerA.get('/api/v1/envelopes?archived=true&pageSize=100').expect(200);
+    expect(archived.body.data.map((e: { id: string }) => e.id)).toContain(envelopeId);
+    await request(app.getHttpServer()).get(`/api/v1/verify/${validationCode}`).expect(200);
+    await post(ownerA, `/api/v1/envelopes/${envelopeId}/unarchive`).send({}).expect(200);
+    expect((await ownerA.get('/api/v1/envelopes?pageSize=100').expect(200)).body.data.map((e: { id: string }) => e.id)).toContain(envelopeId);
+  });
+
   it('logout-all revoga sessões (sessão revogada não autentica)', async () => {
     await post(ownerA, '/api/v1/auth/logout-all').expect(200);
     await ownerA.get('/api/v1/auth/me').expect(401);

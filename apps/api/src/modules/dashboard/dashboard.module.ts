@@ -18,9 +18,9 @@ export class DashboardService {
   async summary(auth: AuthContext) {
     const orgId = auth.organizationId;
     const [grouped, recent, plan, usage] = await Promise.all([
-      this.prisma.envelope.groupBy({ by: ['status'], where: { organizationId: orgId }, _count: { _all: true } }),
+      this.prisma.envelope.groupBy({ by: ['status'], where: { organizationId: orgId, deletedAt: null }, _count: { _all: true } }),
       this.prisma.envelope.findMany({
-        where: { organizationId: orgId },
+        where: { organizationId: orgId, deletedAt: null, archivedAt: null },
         orderBy: { updatedAt: 'desc' },
         take: 8,
         select: { id: true, title: true, status: true, updatedAt: true, expiresAt: true, signers: { select: { status: true } } },

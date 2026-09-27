@@ -3,8 +3,14 @@ import { buildEnvelopeWhere } from '../../src/modules/envelopes/envelope-filters
 const ORG = 'org-1';
 
 describe('buildEnvelopeWhere', () => {
-  it('sempre restringe à organização', () => {
-    expect(buildEnvelopeWhere(ORG, {})).toEqual({ AND: [{ organizationId: ORG }] });
+  const base = { organizationId: ORG, deletedAt: null, archivedAt: null };
+
+  it('sempre restringe à organização e esconde rascunhos excluídos e arquivados', () => {
+    expect(buildEnvelopeWhere(ORG, {})).toEqual({ AND: [base] });
+  });
+
+  it('arquivados só quando pedidos', () => {
+    expect(buildEnvelopeWhere(ORG, { archived: 'true' })).toEqual({ AND: [{ ...base, archivedAt: { not: null } }] });
   });
 
   it('origem, modelo, vendedor e período', () => {
@@ -16,7 +22,7 @@ describe('buildEnvelopeWhere', () => {
       to: '2026-09-30T23:59:59.000Z',
     });
     expect(w.AND).toEqual([
-      { organizationId: ORG },
+      base,
       { createdByApiKeyId: { not: null } },
       { templateId: 't1' },
       { signers: { some: { externalId: 'usuario-17', representing: { not: null } } } },

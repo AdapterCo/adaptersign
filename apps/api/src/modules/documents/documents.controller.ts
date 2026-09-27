@@ -137,8 +137,8 @@ export class DocumentsController {
 
   @RequirePermission(Permission.DOCUMENT_WRITE)
   @Delete(':id')
-  async remove(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
-    await this.documents.softDelete(auth, id);
+  async remove(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    await this.documents.softDelete(auth, id, clientInfo(req));
     return { ok: true };
   }
 }

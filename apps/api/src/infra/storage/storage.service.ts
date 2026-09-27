@@ -80,6 +80,14 @@ export class StorageService {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  /**
+   * Remove o arquivo de um documento EXCLUÍDO que nunca foi enviado para assinatura.
+   * Nunca usar para documentos de envelopes enviados (são prova e ficam imutáveis).
+   */
+  async deleteDiscarded(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
   async ping(): Promise<void> {
     await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
   }

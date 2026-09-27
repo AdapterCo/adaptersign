@@ -6,6 +6,7 @@ import 'dotenv/config';
 import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { getConfig } from '../../src/config/config';
@@ -204,7 +205,19 @@ describe('Contratação de plano — Checkout Transparente (provedor simulado)',
   });
 
   it('cota: plano + bônus de 10% e depois documentos extras (só para plano pago)', async () => {
-    const newEnvelope = () => post('/api/v1/envelopes').send({ title: `Env ${Math.random()}` });
+    // A cota é consumida no ENVIO: rascunhos não contam.
+    const orgUser = await prisma.user.findUniqueOrThrow({ where: { email: `pagante-${run}@exemplo.test` } });
+    await prisma.user.update({ where: { id: orgUser.id }, data: { emailVerifiedAt: new Date() } });
+    const draft = async () => {
+      const doc = await PDFDocument.create();
+      doc.addPage().drawText(`Contrato ${Math.random()}`, { x: 50, y: 700, size: 12, font: await doc.embedFont(StandardFonts.Helvetica) });
+      const up = await post('/api/v1/documents').attach('file', Buffer.from(await doc.save()), { filename: 'c.pdf', contentType: 'application/pdf' }).expect(201);
+      const env = await post('/api/v1/envelopes')
+        .send({ title: `Env ${Math.random()}`, documents: [{ documentId: up.body.id }], signers: [{ name: 'Cliente Teste', email: `cli-${Math.random()}@exemplo.test` }] })
+        .expect(201);
+      return env.body.id as string;
+    };
+    const newEnvelope = async () => post(`/api/v1/envelopes/${await draft()}/activate`).send({});
     // Após o estorno a conta está no plano gratuito: não compra extras.
     await post('/api/v1/billing/checkout').send({ packCode }).expect(422);
     await post('/api/v1/billing/checkout').send({ planCode, packCode }).expect(400);
@@ -214,15 +227,20 @@ describe('Contratação de plano — Checkout Transparente (provedor simulado)',
     const orgId = (await agent.get('/api/v1/organizations/current').expect(200)).body.id as string;
     await prisma.usageRecord.deleteMany({ where: { organizationId: orgId, metric: 'ENVELOPES_CREATED' } });
 
-    // Plano: 2; bônus: 10% de 2 = 1 (arredondado para cima) → 3 envelopes.
-    for (let i = 0; i < 3; i++) await newEnvelope().expect(201);
-    const blocked = await newEnvelope().expect(402);
+    // Rascunhos não consomem cota.
+    await draft();
+    expect((await agent.get('/api/v1/billing').expect(200)).body.quota.used).toBe(0);
+
+    // Plano: 2; bônus: 10% de 2 = 1 (arredondado para cima) → 3 envios.
+    for (let i = 0; i < 3; i++) expect((await newEnvelope()).status).toBe(200);
+    const blocked = await newEnvelope();
+    expect(blocked.status).toBe(402);
     expect(blocked.body.error.details).toMatchObject({ limit: 2, bonus: 1, can_buy_extra: true, extra_credits: 0 });
 
     const pack = await order({ packCode });
     await post(`/api/v1/billing/payments/${pack}/card`).send({ token: CARD_OK, paymentMethodId: 'master' }).expect(200);
     expect((await agent.get('/api/v1/billing').expect(200)).body.quota).toMatchObject({ limit: 2, bonus: 1, used: 3, credits: 3, next: 'credit' });
-    await newEnvelope().expect(201);
+    expect((await newEnvelope()).status).toBe(200);
     expect((await agent.get('/api/v1/billing').expect(200)).body.quota.credits).toBe(2);
 
     // Estorno do pacote retira só o saldo restante.
@@ -230,7 +248,7 @@ describe('Contratação de plano — Checkout Transparente (provedor simulado)',
     fake.set(packPay, { status: 'refunded' });
     await webhook(packPay).expect(200);
     expect((await agent.get('/api/v1/billing').expect(200)).body.quota.credits).toBe(0);
-    await newEnvelope().expect(402);
+    expect((await newEnvelope()).status).toBe(402);
   });
 
   it('notificação de pagamento desconhecido ou de outro tipo é ignorada sem erro', async () => {

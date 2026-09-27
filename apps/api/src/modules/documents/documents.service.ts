@@ -191,7 +191,7 @@ export class DocumentsService {
           versions: {
             orderBy: { versionNumber: 'desc' },
             take: 1,
-            include: { envelopeDocuments: { select: { envelopeId: true, envelope: { select: { id: true, title: true, status: true } } } } },
+            include: { envelopeDocuments: { where: { envelope: { deletedAt: null } }, select: { envelopeId: true, envelope: { select: { id: true, title: true, status: true } } } } },
           },
         },
       }),
@@ -213,7 +213,7 @@ export class DocumentsService {
       include: {
         versions: {
           orderBy: { versionNumber: 'desc' },
-          include: { envelopeDocuments: { select: { envelope: { select: { id: true, title: true, status: true } } } } },
+          include: { envelopeDocuments: { where: { envelope: { deletedAt: null } }, select: { envelope: { select: { id: true, title: true, status: true } } } } },
         },
       },
     });
@@ -249,13 +249,44 @@ export class DocumentsService {
     return { stream, filename: version.filename, size: version.sizeBytes };
   }
 
-  async softDelete(auth: AuthContext, documentId: string) {
-    const doc = await this.findOwned(auth, documentId);
-    const inUse = await this.prisma.envelopeDocument.count({
-      where: { documentVersion: { documentId: doc.id }, envelope: { status: { not: 'DRAFT' } } },
+  /**
+   * Exclui um documento que NUNCA foi enviado para assinatura (ex.: subiu o arquivo errado):
+   * sai dos rascunhos em que estava, o espaço volta para a cota e os arquivos são apagados do
+   * armazenamento. Documentos de envelopes enviados são prova e não podem ser excluídos.
+   */
+  async softDelete(auth: AuthContext, documentId: string, client: ClientInfo) {
+    const keys = await this.prisma.tx(async (tx) => {
+      await this.limits.lockOrganization(tx, auth.organizationId);
+      const doc = await tx.document.findFirst({
+        where: { id: documentId, organizationId: auth.organizationId, deletedAt: null },
+        include: { versions: { select: { id: true, storageKey: true, sizeBytes: true } } },
+      });
+      if (!doc) throw Errors.notFound('DOCUMENT_NOT_FOUND', 'Documento não encontrado.');
+      const inUse = await tx.envelopeDocument.count({
+        where: { documentVersion: { documentId: doc.id }, envelope: { status: { not: 'DRAFT' } } },
+      });
+      if (inUse > 0) {
+        throw Errors.unprocessable('DOCUMENT_IN_USE', 'Este documento já foi enviado para assinatura e faz parte da prova — não pode ser excluído. Arquive o envelope.');
+      }
+      // Retira dos rascunhos (os campos posicionados saem junto).
+      const removed = await tx.envelopeDocument.deleteMany({ where: { documentVersion: { documentId: doc.id }, envelope: { status: 'DRAFT' } } });
+      await tx.document.update({ where: { id: doc.id }, data: { deletedAt: new Date() } });
+      const bytes = doc.versions.reduce((sum, v) => sum + v.sizeBytes, 0n);
+      if (bytes > 0n) await this.usage.increment(tx, auth.organizationId, UsageMetric.STORAGE_BYTES, -bytes);
+      await this.audit.record(tx, {
+        eventType: AuditEventType.DOCUMENT_DELETED,
+        actor: actorOf(auth),
+        organizationId: auth.organizationId,
+        documentId: doc.id,
+        ...client,
+        metadata: { title: doc.title, versions: doc.versions.length, bytes: bytes.toString(), removedFromDrafts: removed.count },
+      });
+      return doc.versions.map((v) => v.storageKey);
     });
-    if (inUse > 0) throw Errors.unprocessable('DOCUMENT_IN_USE', 'Documento vinculado a envelope enviado não pode ser removido.');
-    await this.prisma.document.update({ where: { id: doc.id }, data: { deletedAt: new Date() } });
+    // Arquivos apagados após o commit; falha aqui não desfaz a exclusão (só sobra o arquivo).
+    for (const key of keys) {
+      await this.storage.deleteDiscarded(key).catch((err: unknown) => this.logger.warn({ event: 'document_blob_delete_failed', error: String(err) }));
+    }
   }
 
   private async findOwned(auth: AuthContext, documentId: string) {

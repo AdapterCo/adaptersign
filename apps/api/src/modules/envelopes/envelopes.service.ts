@@ -101,7 +101,7 @@ export class EnvelopesService {
   /** Busca com lock (FOR UPDATE) e validação explícita de tenant. */
   private async lockEnvelope(tx: Tx, auth: AuthContext, envelopeId: string) {
     const rows = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT "id" FROM "envelopes" WHERE "id" = ${envelopeId}::uuid AND "organization_id" = ${auth.organizationId}::uuid FOR UPDATE`;
+      SELECT "id" FROM "envelopes" WHERE "id" = ${envelopeId}::uuid AND "organization_id" = ${auth.organizationId}::uuid AND "deleted_at" IS NULL FOR UPDATE`;
     if (rows.length === 0) throw Errors.notFound('ENVELOPE_NOT_FOUND', 'Envelope não encontrado.');
     return tx.envelope.findUniqueOrThrow({ where: { id: envelopeId } });
   }
@@ -118,7 +118,7 @@ export class EnvelopesService {
     const expiresAt = this.parseExpiry(dto.expiresAt);
     const events: EmittedEvent[] = [];
     const id = await this.prisma.tx(async (tx) => {
-      const quota = await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
+      // A cota do plano é consumida no ENVIO (ativação), não no rascunho.
       const envelope = await this.createWithUniqueCode(tx, {
         organizationId: auth.organizationId,
         title: cleanText(dto.title),
@@ -129,14 +129,13 @@ export class EnvelopesService {
         externalRef: dto.externalRef ?? null,
         ...creatorFields(auth),
       });
-      await this.usage.increment(tx, auth.organizationId, UsageMetric.ENVELOPES_CREATED, 1);
       await this.audit.record(tx, {
         eventType: AuditEventType.ENVELOPE_CREATED,
         actor: actorOf(auth),
         organizationId: auth.organizationId,
         envelopeId: envelope.id,
         ...client,
-        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt: envelope.expiresAt, externalRef: envelope.externalRef, quota },
+        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt: envelope.expiresAt, externalRef: envelope.externalRef },
       });
       for (const d of dto.documents ?? []) await this.addDocumentTx(tx, auth, envelope.id, d, client);
       for (const s of dto.signers ?? []) await this.addSignerTx(tx, auth, envelope.id, s, client);
@@ -162,7 +161,6 @@ export class EnvelopesService {
     const expiresAt = this.parseExpiry(input.expiresAt);
     const events: EmittedEvent[] = [];
     const id = await this.prisma.tx(async (tx) => {
-      const quota = await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
       const envelope = await this.createWithUniqueCode(tx, {
         organizationId: auth.organizationId,
         title: cleanText(input.title),
@@ -173,14 +171,13 @@ export class EnvelopesService {
         templateId: input.templateId,
         ...creatorFields(auth),
       });
-      await this.usage.increment(tx, auth.organizationId, UsageMetric.ENVELOPES_CREATED, 1);
       await this.audit.record(tx, {
         eventType: AuditEventType.ENVELOPE_CREATED,
         actor: actorOf(auth),
         organizationId: auth.organizationId,
         envelopeId: envelope.id,
         ...client,
-        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt, externalRef: input.externalRef, templateId: input.templateId, quota },
+        metadata: { title: envelope.title, signingMode: envelope.signingMode, expiresAt, externalRef: input.externalRef, templateId: input.templateId },
       });
       await this.addDocumentTx(tx, auth, envelope.id, { documentId: input.documentId }, client);
       const envelopeDocument = await tx.envelopeDocument.findFirstOrThrow({ where: { envelopeId: envelope.id }, select: { id: true } });
@@ -426,7 +423,7 @@ export class EnvelopesService {
   // ───────────── Campos posicionados (rascunho) ─────────────
 
   async listFields(auth: AuthContext, envelopeId: string) {
-    const env = await this.prisma.envelope.findFirst({ where: { id: envelopeId, organizationId: auth.organizationId }, select: { id: true } });
+    const env = await this.prisma.envelope.findFirst({ where: { id: envelopeId, organizationId: auth.organizationId, deletedAt: null }, select: { id: true } });
     if (!env) throw Errors.notFound('ENVELOPE_NOT_FOUND', 'Envelope não encontrado.');
     const rows = await this.prisma.envelopeField.findMany({
       where: { envelopeId, organizationId: auth.organizationId },
@@ -447,7 +444,7 @@ export class EnvelopesService {
    */
   async applyTemplate(auth: AuthContext, envelopeId: string, dto: ApplyTemplateDto, client: ClientInfo) {
     const env = await this.prisma.envelope.findFirst({
-      where: { id: envelopeId, organizationId: auth.organizationId },
+      where: { id: envelopeId, organizationId: auth.organizationId, deletedAt: null },
       include: {
         documents: { orderBy: { position: 'asc' }, include: { documentVersion: { select: { storageKey: true } } } },
         signers: { select: { id: true } },
@@ -577,6 +574,10 @@ export class EnvelopesService {
       if (!signers.some((s) => s.required)) throw Errors.unprocessable('ENVELOPE_WITHOUT_REQUIRED_SIGNER', 'Ao menos um signatário deve ser obrigatório.');
       assertSignersActivatable(signers);
 
+      // Cota do plano (plano → bônus → extras) consumida no envio; falhas desfazem tudo junto.
+      const quota = await this.limits.assertCanCreateEnvelope(tx, auth.organizationId);
+      await this.usage.increment(tx, auth.organizationId, UsageMetric.ENVELOPES_CREATED, 1);
+
       const now = new Date();
       await tx.envelope.update({ where: { id: envelopeId }, data: { status: EnvelopeStatus.ACTIVE, activatedAt: now } });
       // A partir daqui os documentos deste processo são imutáveis (versão travada + trigger no banco).
@@ -596,6 +597,7 @@ export class EnvelopesService {
           signers: signers.map((s) => ({ signerId: s.id, role: s.role, signingGroup: s.signingGroup, authMethod: s.authMethod })),
           signingMode: env.signingMode,
           expiresAt: env.expiresAt,
+          quota,
           // Posição exata de cada campo (evidência de onde cada signatário assina).
           fields: fields.map((f) => ({
             envelopeDocumentId: f.envelopeDocumentId,
@@ -713,6 +715,53 @@ export class EnvelopesService {
     return { ok: true };
   }
 
+  // ───────────── Exclusão e arquivamento ─────────────
+
+  /** Exclui um RASCUNHO (nunca enviado): some das listas. Envelopes enviados não podem ser excluídos. */
+  async discardDraft(auth: AuthContext, envelopeId: string, client: ClientInfo) {
+    await this.prisma.tx(async (tx) => {
+      const env = await this.lockEnvelope(tx, auth, envelopeId);
+      if (env.status !== EnvelopeStatus.DRAFT) {
+        throw Errors.conflict('ENVELOPE_NOT_DRAFT', 'Só rascunhos podem ser excluídos. Envelopes enviados podem ser cancelados e depois arquivados.');
+      }
+      await tx.envelope.update({ where: { id: envelopeId }, data: { deletedAt: new Date() } });
+      await this.audit.record(tx, {
+        eventType: AuditEventType.ENVELOPE_DISCARDED,
+        actor: actorOf(auth),
+        organizationId: auth.organizationId,
+        envelopeId,
+        ...client,
+        metadata: { title: env.title },
+      });
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Arquiva (ou desarquiva) um envelope FINALIZADO: sai da lista padrão, mas continua guardado,
+   * com trilha de auditoria, documentos e evidências, e segue verificável pelo código.
+   */
+  async setArchived(auth: AuthContext, envelopeId: string, archived: boolean, client: ClientInfo) {
+    await this.prisma.tx(async (tx) => {
+      const env = await this.lockEnvelope(tx, auth, envelopeId);
+      const finalStatuses: EnvelopeStatus[] = [EnvelopeStatus.COMPLETED, EnvelopeStatus.CANCELLED, EnvelopeStatus.EXPIRED, EnvelopeStatus.DECLINED];
+      if (!finalStatuses.includes(env.status)) {
+        throw Errors.conflict('ENVELOPE_NOT_FINISHED', 'Só envelopes finalizados podem ser arquivados. Cancele o envelope antes, se necessário.');
+      }
+      if (!!env.archivedAt === archived) return;
+      await tx.envelope.update({ where: { id: envelopeId }, data: { archivedAt: archived ? new Date() : null } });
+      await this.audit.record(tx, {
+        eventType: archived ? AuditEventType.ENVELOPE_ARCHIVED : AuditEventType.ENVELOPE_UNARCHIVED,
+        actor: actorOf(auth),
+        organizationId: auth.organizationId,
+        envelopeId,
+        ...client,
+        metadata: {},
+      });
+    });
+    return this.get(auth, envelopeId);
+  }
+
   // ───────────── Consulta ─────────────
 
   async list(auth: AuthContext, q: ListEnvelopesQuery) {
@@ -748,6 +797,7 @@ export class EnvelopesService {
           status: true,
           publicValidationCode: true,
           externalRef: true,
+          archivedAt: true,
           createdByApiKeyId: true,
           template: { select: { id: true, name: true } },
           createdAt: true,
@@ -766,6 +816,7 @@ export class EnvelopesService {
         status: e.status,
         validationCode: e.status === EnvelopeStatus.DRAFT ? null : e.publicValidationCode,
         externalRef: e.externalRef,
+        archivedAt: e.archivedAt,
         origin: e.createdByApiKeyId ? 'integration' : 'manual',
         template: e.template,
         createdAt: e.createdAt,
@@ -784,7 +835,7 @@ export class EnvelopesService {
 
   async get(auth: AuthContext, envelopeId: string) {
     const env = await this.prisma.envelope.findFirst({
-      where: { id: envelopeId, organizationId: auth.organizationId },
+      where: { id: envelopeId, organizationId: auth.organizationId, deletedAt: null },
       include: {
         documents: { orderBy: { position: 'asc' }, include: { documentVersion: true } },
         signers: { orderBy: [{ signingGroup: 'asc' }, { createdAt: 'asc' }], include: { signature: { select: { method: true, signedAt: true, authMethod: true } } } },
@@ -802,6 +853,7 @@ export class EnvelopesService {
       validationCode: env.status === EnvelopeStatus.DRAFT ? null : env.publicValidationCode,
       externalRef: env.externalRef,
       templateId: env.templateId,
+      archivedAt: env.archivedAt,
       origin: env.createdByApiKeyId ? 'integration' : 'manual',
       expiresAt: env.expiresAt,
       reminderIntervalHours: env.reminderIntervalHours,
@@ -857,7 +909,7 @@ export class EnvelopesService {
   }
 
   async timeline(auth: AuthContext, envelopeId: string) {
-    const env = await this.prisma.envelope.findFirst({ where: { id: envelopeId, organizationId: auth.organizationId }, select: { id: true } });
+    const env = await this.prisma.envelope.findFirst({ where: { id: envelopeId, organizationId: auth.organizationId, deletedAt: null }, select: { id: true } });
     if (!env) throw Errors.notFound('ENVELOPE_NOT_FOUND', 'Envelope não encontrado.');
     const [events, signers] = await Promise.all([
       this.prisma.auditEvent.findMany({

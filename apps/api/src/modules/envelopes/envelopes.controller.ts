@@ -128,6 +128,28 @@ export class EnvelopesController {
     return this.envelopes.activate(auth, id, clientInfo(req));
   }
 
+  @RequirePermission(Permission.ENVELOPE_WRITE)
+  @Delete(':id')
+  @ApiOperation({ summary: 'Exclui um rascunho (envelopes enviados não podem ser excluídos — arquive-os)' })
+  discard(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    return this.envelopes.discardDraft(auth, id, clientInfo(req));
+  }
+
+  @RequirePermission(Permission.ENVELOPE_WRITE)
+  @HttpCode(200)
+  @Post(':id/archive')
+  @ApiOperation({ summary: 'Arquiva um envelope finalizado (continua guardado e verificável)' })
+  archive(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    return this.envelopes.setArchived(auth, id, true, clientInfo(req));
+  }
+
+  @RequirePermission(Permission.ENVELOPE_WRITE)
+  @HttpCode(200)
+  @Post(':id/unarchive')
+  unarchive(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    return this.envelopes.setArchived(auth, id, false, clientInfo(req));
+  }
+
   @RequirePermission(Permission.ENVELOPE_CANCEL)
   @Idempotent()
   @IdempotencyHeader

@@ -108,7 +108,7 @@ export class ContractsService {
     if (!locked) throw Errors.conflict('CONTRACT_IN_PROGRESS', 'Este contrato já está sendo processado. Tente novamente em instantes.');
     try {
       const existing = await this.prisma.envelope.findFirst({
-        where: { organizationId: auth.organizationId, externalRef: data.externalRef, status: { notIn: CLOSED_STATUSES } },
+        where: { organizationId: auth.organizationId, externalRef: data.externalRef, status: { notIn: CLOSED_STATUSES }, deletedAt: null },
         orderBy: { createdAt: 'desc' },
         select: { id: true },
       });
