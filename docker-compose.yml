@@ -14,12 +14,20 @@
 
 name: adaptersign
 
+# Logs com rotação: sem isso o Docker grava sem limite e pode encher o disco da VPS compartilhada.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-api-env: &api-env
   env_file: .env
   restart: unless-stopped
 
 services:
   adaptersign-postgres:
+    logging: *logging
     labels:
       - traefik.enable=false
     image: postgres:16-alpine
@@ -37,6 +45,7 @@ services:
       retries: 10
 
   adaptersign-redis:
+    logging: *logging
     labels:
       - traefik.enable=false
     image: redis:7.2-alpine
@@ -54,6 +63,7 @@ services:
 
   # Aplica migrations pendentes e encerra (nunca comandos destrutivos).
   adaptersign-migrate:
+    logging: *logging
     labels:
       - traefik.enable=false
     build:
@@ -68,6 +78,7 @@ services:
     restart: "no"
 
   adaptersign-api:
+    logging: *logging
     <<: *api-env
     image: adaptersign-api:latest
     pull_policy: never
@@ -81,6 +92,7 @@ services:
       - "4000"
 
   adaptersign-worker:
+    logging: *logging
     labels:
       - traefik.enable=false
     <<: *api-env
@@ -96,6 +108,7 @@ services:
       disable: true
 
   adaptersign-web:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/web/Dockerfile
