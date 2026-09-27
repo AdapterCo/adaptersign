@@ -48,8 +48,7 @@ export function isBlockedAddress(input: string): boolean {
 /**
  * Valida URL de webhook: HTTPS (HTTP apenas quando destinos privados são permitidos em dev),
  * sem credenciais embutidas, e todos os IPs resolvidos devem ser públicos.
- * Observação: existe janela residual de DNS rebinding entre a resolução e a conexão
- * (documentado em docs/webhooks.md); recomendada egress policy no ambiente de produção.
+ * A entrega revalida o IP no momento da conexão (safe-post.ts) — sem janela de DNS rebinding.
  */
 export async function assertSafeWebhookUrl(raw: string, allowPrivate: boolean): Promise<URL> {
   let url: URL;

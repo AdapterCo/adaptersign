@@ -31,7 +31,7 @@
 
 ## Limitações conhecidas (tratar antes de escalar)
 
-- **DNS rebinding em webhooks**: o IP é validado na resolução, mas a conexão resolve de novo. Mitigue com política de egress (firewall) no host.
+- **DNS rebinding em webhooks**: resolvido — o endereço é revalidado dentro da própria conexão (`safe-post.ts`), então não há janela entre validar e conectar. Uma política de egress no host continua sendo uma camada extra recomendada.
 - **Rate limit de janela fixa**: permite rajadas na virada da janela. Suficiente para o MVP.
 - **MFA administrativo**: o modelo está preparado (`users.mfa_enabled`), mas não está implementado.
 - **Antivírus**: não integrado; o ponto de extensão está em `DocumentsService.validate`.

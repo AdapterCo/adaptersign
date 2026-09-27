@@ -7,6 +7,7 @@ import { BRANDING } from '../../config/config.module';
 import type { Branding } from '../../config/branding';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 import { assertSafeWebhookUrl } from './url-safety';
+import { safePost } from './safe-post';
 import { signWebhook, WEBHOOK_HEADERS } from './webhook-signature';
 
 /** Tentativas: imediato, 1 min, 5 min, 30 min, 2 h (seção 44). Após a última: DEAD. */
@@ -42,11 +43,10 @@ export class WebhookDeliveryService {
     try {
       const url = await assertSafeWebhookUrl(d.endpoint.url, this.config.WEBHOOK_ALLOW_PRIVATE_TARGETS);
       const secret = this.encryption.decrypt(d.endpoint.secretEncrypted);
-      const res = await fetch(url, {
-        method: 'POST',
-        redirect: 'manual',
-        signal: AbortSignal.timeout(this.config.WEBHOOK_TIMEOUT_MS),
-        headers: {
+      // Conexão com o IP revalidado no próprio lookup (sem janela de DNS rebinding), sem redirects.
+      const res = await safePost(
+        url,
+        {
           'Content-Type': 'application/json',
           'User-Agent': `${this.brand.name.replace(/[^A-Za-z0-9]/g, '')}-Webhooks/1.0`,
           [WEBHOOK_HEADERS.signature]: signWebhook(secret, timestamp, d.eventId, body),
@@ -56,10 +56,10 @@ export class WebhookDeliveryService {
           [WEBHOOK_HEADERS.attempt]: String(attempt),
         },
         body,
-      });
+        { timeoutMs: this.config.WEBHOOK_TIMEOUT_MS, allowPrivate: this.config.WEBHOOK_ALLOW_PRIVATE_TARGETS },
+      );
+      // Corpo da resposta NÃO é lido nem armazenado (pode conter segredos do cliente).
       statusCode = res.status;
-      // Corpo da resposta NÃO é armazenado (pode conter segredos do cliente).
-      await res.body?.cancel().catch(() => undefined);
       if (res.status < 200 || res.status >= 300) error = `HTTP ${res.status}`;
     } catch (err) {
       error = (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300);
