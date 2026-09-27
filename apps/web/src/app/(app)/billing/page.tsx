@@ -103,6 +103,7 @@ function Billing() {
                 <span>{t.billing.usage(q.used, q.limit!)}</span>
                 {q.bonus > 0 && <span className="text-muted">{t.billing.bonus(q.bonus)}</span>}
               </div>
+              <p className="text-xs text-muted">{t.billing.usageHint}</p>
               <div className="mt-2 h-2 rounded-full bg-canvas" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
                 <div className={`h-2 rounded-full ${q.next === null ? 'bg-bad' : q.next === 'bonus' || q.next === 'credit' ? 'bg-warn' : 'bg-brand'}`} style={{ width: `${pct}%` }} />
               </div>

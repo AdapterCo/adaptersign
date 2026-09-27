@@ -111,6 +111,9 @@ Configuração:
 Homologação: use as credenciais de **teste** (e a assinatura do webhook do modo de teste) com os cartões de teste do
 Mercado Pago; depois troque para as de produção.
 
+Avisos: os administradores recebem e-mail 3 dias antes do vencimento e no dia em que o plano vence
+(não sai se já tiver renovado).
+
 Regras: cada pagamento aprovado libera 1 mês. Renovar o mesmo plano soma ao fim do período; trocar de plano começa
 na aprovação (sem proporcional). Sem renovação automática: ao vencer, a conta volta ao plano `FREE`. O Pix vale 30
 minutos (dá para gerar outro). Se um cartão for aprovado com um Pix pendente, o Pix é cancelado. Estorno ou

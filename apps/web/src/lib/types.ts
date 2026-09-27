@@ -26,6 +26,7 @@ export interface EnvelopeDetail {
   externalRef: string | null;
   templateId: string | null;
   origin: 'integration' | 'manual';
+  archivedAt: string | null;
   documents: Array<{
     id: string;
     documentId: string;

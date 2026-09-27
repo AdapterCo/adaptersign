@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api, downloadFile, newIdempotencyKey } from '@/lib/api';
 import { t } from '@/lib/i18n';
@@ -19,6 +19,8 @@ interface Timeline {
 export default function EnvelopeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { can } = useSession();
+  const router = useRouter();
+  const [discardOpen, setDiscardOpen] = useState(false);
   const { data: env, error, loading, reload } = useApi<EnvelopeDetail>(`/envelopes/${id}`);
   const { data: timeline, reload: reloadTimeline } = useApi<Timeline>(`/envelopes/${id}/timeline`);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -77,9 +79,23 @@ export default function EnvelopeDetailPage() {
                 {t.envelopes.remind}
               </Button>
             )}
-            {(signable || env.status === 'DRAFT') && !env.finalizing && can('envelope:cancel') && (
+            {signable && !env.finalizing && can('envelope:cancel') && (
               <Button variant="danger" onClick={() => setCancelOpen(true)}>
                 {t.envelopes.cancel}
+              </Button>
+            )}
+            {env.status === 'DRAFT' && can('envelope:write') && (
+              <Button variant="danger" onClick={() => setDiscardOpen(true)}>
+                {t.envelopes.discardDraft}
+              </Button>
+            )}
+            {['COMPLETED', 'CANCELLED', 'EXPIRED', 'DECLINED'].includes(env.status) && can('envelope:write') && (
+              <Button
+                variant="secondary"
+                loading={busy}
+                onClick={() => run(() => api(`/envelopes/${id}/${env.archivedAt ? 'unarchive' : 'archive'}`, { method: 'POST', body: {} }))}
+              >
+                {env.archivedAt ? t.envelopes.unarchive : t.envelopes.archive}
               </Button>
             )}
           </div>
@@ -118,6 +134,33 @@ export default function EnvelopeDetailPage() {
         <ErrorMessage error={actionError} />
       </div>
 
+      {env.archivedAt && (
+        <div className="mb-6">
+          <Alert tone="info">{t.envelopes.archivedHelp}</Alert>
+        </div>
+      )}
+      {discardOpen && (
+        <Card className="mb-6" title={t.envelopes.discardDraft}>
+          <p className="mb-3 text-sm text-muted">{t.envelopes.discardConfirm}</p>
+          <div className="flex gap-2">
+            <Button
+              variant="danger"
+              loading={busy}
+              onClick={() =>
+                void run(async () => {
+                  await api(`/envelopes/${id}`, { method: 'DELETE' });
+                  router.replace('/envelopes');
+                })
+              }
+            >
+              {t.common.confirm}
+            </Button>
+            <Button variant="secondary" onClick={() => setDiscardOpen(false)}>
+              {t.common.cancel}
+            </Button>
+          </div>
+        </Card>
+      )}
       {cancelOpen && (
         <Card className="mb-6" title={t.envelopes.cancel}>
           <p className="mb-3 text-sm text-muted">{t.envelopes.cancelConfirm}</p>

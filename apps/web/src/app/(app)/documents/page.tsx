@@ -24,6 +24,23 @@ export default function DocumentsPage() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<unknown>(null);
+
+  async function removeDocument(docId: string) {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api(`/documents/${docId}`, { method: 'DELETE' });
+      setConfirmDelete(null);
+      await reload();
+    } catch (err) {
+      setDeleteError(err);
+    } finally {
+      setDeleting(false);
+    }
+  }
   const [uploadError, setUploadError] = useState<unknown>(null);
 
   async function upload(e: FormEvent) {
@@ -95,6 +112,7 @@ export default function DocumentsPage() {
         </form>
 
         <ErrorMessage error={error} />
+        <ErrorMessage error={deleteError} />
         {loading && <Spinner label={t.common.loading} />}
         {data && data.data.length === 0 && <p className="text-sm text-muted">{t.common.empty}</p>}
         {data && data.data.length > 0 && (
@@ -137,11 +155,33 @@ export default function DocumentsPage() {
                       </ul>
                     </td>
                     <td className="py-3 text-right">
-                      {d.latestVersion && (
-                        <Button variant="ghost" onClick={() => downloadFile(`/documents/${d.id}/versions/${d.latestVersion!.id}/content?mode=download`, d.originalFilename)}>
-                          {t.common.download}
-                        </Button>
-                      )}
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {d.latestVersion && (
+                          <Button variant="ghost" onClick={() => downloadFile(`/documents/${d.id}/versions/${d.latestVersion!.id}/content?mode=download`, d.originalFilename)}>
+                            {t.common.download}
+                          </Button>
+                        )}
+                        {can('document:write') &&
+                          (d.envelopes.some((e) => e.status !== 'DRAFT') ? (
+                            <span className="self-center text-xs text-muted" title={t.documents.deleteBlocked}>
+                              🔒
+                            </span>
+                          ) : confirmDelete === d.id ? (
+                            <>
+                              <Button variant="danger" loading={deleting} onClick={() => void removeDocument(d.id)}>
+                                {t.common.confirm}
+                              </Button>
+                              <Button variant="ghost" onClick={() => setConfirmDelete(null)}>
+                                {t.common.cancel}
+                              </Button>
+                            </>
+                          ) : (
+                            <Button variant="ghost" onClick={() => setConfirmDelete(d.id)}>
+                              {t.documents.delete}
+                            </Button>
+                          ))}
+                      </div>
+                      {confirmDelete === d.id && <p className="mt-1 max-w-xs text-left text-xs text-muted">{t.documents.deleteConfirm}</p>}
                     </td>
                   </tr>
                 ))}

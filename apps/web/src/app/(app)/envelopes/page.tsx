@@ -29,7 +29,7 @@ interface EnvelopeRow {
 
 const STATUSES = ['DRAFT', 'ACTIVE', 'PARTIALLY_SIGNED', 'COMPLETED', 'EXPIRED', 'CANCELLED', 'DECLINED'];
 // Filtros aceitos pela API (também lidos da URL, ex.: /envelopes?sameCpfAs=<signatário>).
-const FILTER_KEYS = ['search', 'status', 'origin', 'templateId', 'cpf', 'externalRef', 'representative', 'from', 'to', 'sameCpfAs'] as const;
+const FILTER_KEYS = ['search', 'status', 'origin', 'templateId', 'cpf', 'externalRef', 'representative', 'from', 'to', 'sameCpfAs', 'archived'] as const;
 type Filters = Record<(typeof FILTER_KEYS)[number], string>;
 
 /** "2026-09-01" (campo de data) → início/fim do dia no fuso do navegador, em ISO. */
@@ -125,9 +125,22 @@ function EnvelopesList() {
             </div>
           )}
           {applied.sameCpfAs && <p className="text-sm text-muted">{t.envelopes.filters.sameCpfActive}</p>}
+          {applied.archived === 'true' && <p className="text-sm text-muted">{t.envelopes.archivedListHint}</p>}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="secondary">
               {t.common.search}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                const next = { ...draft, archived: applied.archived === 'true' ? '' : 'true' };
+                setDraft(next);
+                setApplied(next);
+                setPage(1);
+              }}
+            >
+              {applied.archived === 'true' ? t.envelopes.hideArchived : t.envelopes.showArchived}
             </Button>
             <Button type="button" variant="ghost" onClick={() => setMore((m) => !m)}>
               {more ? t.envelopes.filters.less : t.envelopes.filters.more}

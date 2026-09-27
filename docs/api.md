@@ -59,6 +59,9 @@ Stack traces nunca são retornados. Informe o `request_id` ao suporte.
 | POST | `/envelopes/:id/activate` `{ "confirm": true }` | Envia para assinatura (documentos e campos passam a ser imutáveis) |
 | POST | `/envelopes/:id/cancel` `{ "reason"? }` | Cancela (histórico preservado) |
 | POST | `/envelopes/:id/remind` `{ "signerId"? }` | Lembrete manual (no máximo 1 por hora por signatário) |
+| DELETE | `/envelopes/:id` | Exclui um **rascunho** (envelope enviado: `409 ENVELOPE_NOT_DRAFT`) |
+| POST | `/envelopes/:id/archive` · `/envelopes/:id/unarchive` | Arquiva/desarquiva envelope finalizado (continua verificável). Lista: `?archived=true` |
+| DELETE | `/documents/:id` | Exclui documento nunca enviado (sai dos rascunhos, arquivo apagado). Enviado: `422 DOCUMENT_IN_USE` |
 | POST | `/envelopes/:id/signers/:signerId/link` | Novo link individual de assinatura (ex.: para enviar por WhatsApp) |
 | POST | `/sign/otp/request` `{ "channel"?: "EMAIL" \| "WHATSAPP" }` | (Signatário) envia o código — padrão: o canal do link aberto |
 | GET/POST/DELETE | `/organizations/current/company-signature` | Autorização da assinatura da empresa pela integração (POST/DELETE: somente OWNER, via sessão) |
@@ -117,7 +120,8 @@ marcadores de texto — onde os campos devem aparecer:
 | POST | `/billing/payments/:id/card` `{ token, paymentMethodId, issuerId?, payerEmail?, identificationType?, identificationNumber? }` | Paga com o token do componente de cartão do Mercado Pago (sempre à vista; valor/parcelas não são aceitos) |
 | GET | `/billing/payments` · `/billing/payments/:id` | Histórico e situação (reconsulta o provedor se em aberto) |
 
-Ao atingir o limite do plano + bônus + extras, criar envelopes responde `402 PLAN_LIMIT_REACHED` com
+A cota é consumida no **envio** (ativação); rascunhos não contam. Ao atingir o limite do plano + bônus + extras,
+o envio responde `402 PLAN_LIMIT_REACHED` com
 `details: { limit, bonus, used, extra_credits, can_buy_extra }`.
 
 ## Contratos por integração
