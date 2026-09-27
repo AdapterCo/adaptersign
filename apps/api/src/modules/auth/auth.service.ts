@@ -82,7 +82,13 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, passwordHash: true, deletedAt: true, memberships: { orderBy: { createdAt: 'asc' }, take: 1, select: { organizationId: true } } },
+      // Primeira organização ATIVA (uma organização excluída não pode bloquear o acesso às demais).
+      select: {
+        id: true,
+        passwordHash: true,
+        deletedAt: true,
+        memberships: { where: { organization: { deletedAt: null } }, orderBy: { createdAt: 'asc' }, take: 1, select: { organizationId: true } },
+      },
     });
     const ok = await this.passwords.verify(user && !user.deletedAt ? user.passwordHash : null, password);
     const membership = user?.memberships[0];
@@ -243,9 +249,9 @@ export class AuthService {
     if (auth.kind !== 'user') throw Errors.forbidden();
     const membership = await this.prisma.organizationMember.findUnique({
       where: { organizationId_userId: { organizationId, userId: auth.userId } },
-      select: { id: true },
+      select: { id: true, organization: { select: { deletedAt: true } } },
     });
-    if (!membership) throw Errors.forbidden('Você não é membro desta organização.');
+    if (!membership || membership.organization.deletedAt) throw Errors.forbidden('Você não é membro desta organização.');
     return this.prisma.tx(async (tx) => {
       const session = await tx.session.update({ where: { id: auth.sessionId }, data: { organizationId } });
       return this.issueTokens(tx, session.id, auth.userId, organizationId, session.expiresAt);

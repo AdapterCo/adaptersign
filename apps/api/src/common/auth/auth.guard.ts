@@ -93,9 +93,10 @@ export class AuthGuard implements CanActivate {
     const keyHash = this.encryption.hashToken(rawKey, 'api_key');
     const key = await this.prisma.apiKey.findUnique({
       where: { keyHash },
-      select: { id: true, organizationId: true, role: true, revokedAt: true, expiresAt: true, lastUsedAt: true },
+      select: { id: true, organizationId: true, role: true, revokedAt: true, expiresAt: true, lastUsedAt: true, organization: { select: { deletedAt: true } } },
     });
-    if (!key || key.revokedAt || (key.expiresAt && key.expiresAt <= new Date())) {
+    // Organização excluída invalida também as chaves de API dela.
+    if (!key || key.revokedAt || (key.expiresAt && key.expiresAt <= new Date()) || key.organization.deletedAt) {
       throw Errors.unauthenticated('API key inválida ou revogada.');
     }
     const plan = await this.plans.planForOrganization(key.organizationId);
