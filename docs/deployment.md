@@ -83,6 +83,31 @@ docker compose run --rm --no-deps -v /etc/adaptersign-plans.json:/tmp/plans.json
 
 Deve existir o plano indicado em `DEFAULT_PLAN_CODE` (padrão `FREE`); sem ele a API responde `PLAN_NOT_CONFIGURED`.
 
+O mesmo arquivo define os pacotes de documentos extras (`creditPacks`) e o bônus de cada plano
+(`overageBonusPercent`). Valores atuais: Essencial R$ 59 (50 documentos/mês), Profissional R$ 119 (100),
+Empresarial R$ 199 (200), todos com +10% de bônus; extras de 10/25/50 documentos por R$ 15/35/65.
+
+### Contratação online (Mercado Pago)
+
+Checkout Pro: o backend cria a cobrança e o cliente paga na página do Mercado Pago (Pix ou cartão à vista —
+boleto e parcelamento desativados). O plano (ou o pacote) só é liberado pelo backend depois de consultar o
+pagamento na API do Mercado Pago e conferir referência, valor e moeda. Nenhuma credencial vai ao navegador.
+
+1. Mercado Pago → **Suas integrações** → crie a aplicação (Checkout Pro) e copie o **Access Token** de produção.
+2. Em **Webhooks** da aplicação: URL `https://sign.adapterco.com.br/api/v1/billing/webhooks/mercadopago`,
+   evento **Pagamentos**; copie a **chave secreta** gerada.
+3. No `.env`: `BILLING_PROVIDER=mercadopago`, `MERCADOPAGO_ACCESS_TOKEN=...`, `MERCADOPAGO_WEBHOOK_SECRET=...`
+   e recrie `adaptersign-api` e `adaptersign-worker`.
+4. Sincronize os planos e pacotes (comando acima).
+
+Homologação: use as credenciais de **teste** da aplicação e `MERCADOPAGO_USE_SANDBOX_URL=true`, pague com um
+usuário comprador de teste e os cartões de teste do Mercado Pago; depois volte às credenciais de produção.
+
+Regras: cada pagamento aprovado libera 1 mês. Renovar o mesmo plano soma ao fim do período; trocar de plano
+começa na aprovação (sem proporcional). Sem renovação automática: ao vencer, a conta volta ao plano `FREE`.
+Estorno ou contestação do pagamento vigente suspende o plano; de um pacote, retira o saldo restante.
+Se uma notificação se perder, a tela do cliente reconsulta o Mercado Pago ao voltar do pagamento.
+
 ### Administrador da plataforma
 
 Nenhum usuário é criado com senha padrão. Cadastre-se pela aplicação, confirme o e-mail e conceda o acesso:

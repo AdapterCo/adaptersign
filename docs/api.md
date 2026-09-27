@@ -107,6 +107,17 @@ marcadores de texto — onde os campos devem aparecer:
   malformada, responde `422 TEMPLATE_ANCHORS_MISMATCH` (com `missing_signature`, `unknown_roles` e `invalid`
   em `details`) **sem alterar nada**.
 
+## Plano e cobrança
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| GET | `/billing` | Plano atual, cota do mês (`limit`, `bonus`, `used`, `credits`), planos e pacotes |
+| POST | `/billing/checkout` `{ "planCode" }` ou `{ "packCode" }` | (OWNER/ADMIN, sessão) devolve `{ paymentId, url }` — URL da página do Mercado Pago |
+| GET | `/billing/payments` · `/billing/payments/:id` | Histórico e situação (reconsulta o provedor se em aberto) |
+
+Ao atingir o limite do plano + bônus + extras, criar envelopes responde `402 PLAN_LIMIT_REACHED` com
+`details: { limit, bonus, used, extra_credits, can_buy_extra }`.
+
 ## Contratos por integração
 
 Guia completo para o sistema de origem: [`integracao-sistema-vendas.md`](integracao-sistema-vendas.md).
