@@ -71,6 +71,15 @@ export function assertAuthMethodAvailable(method: AuthMethod): void {
   }
 }
 
+/**
+ * Conferência na ativação do envelope. INTEGRATION fica "indisponível" para escolha manual, mas é
+ * atribuído pelo próprio fluxo de integração (POST /envelopes/from-template) ao papel da empresa —
+ * a criação manual de signatários continua barrando esse método (EnvelopesService.addSigner).
+ */
+export function assertSignersActivatable(signers: { authMethod: AuthMethod }[]): void {
+  for (const s of signers) if (s.authMethod !== AuthMethod.INTEGRATION) assertAuthMethodAvailable(s.authMethod);
+}
+
 export function authMethodLabel(method: AuthMethod): string {
   return method === AuthMethod.WHATSAPP_OTP ? 'Código (OTP) enviado por WhatsApp' : REGISTRY[method].label;
 }

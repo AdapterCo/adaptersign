@@ -28,7 +28,7 @@ import { OutboxService, type EmittedEvent } from '../outbox/outbox.service';
 import { DomainEvent } from '../outbox/domain-events';
 import { LimitsService } from '../billing/limits.service';
 import { UsageService } from '../billing/usage.service';
-import { assertAuthMethodAvailable, authMethodLabel } from '../signing/auth-methods';
+import { assertAuthMethodAvailable, assertSignersActivatable, authMethodLabel } from '../signing/auth-methods';
 import { TemplatesService, isPlanValid } from '../templates/templates.service';
 import { planTemplateFields } from '../templates/anchors';
 import type { ApplyTemplateDto } from '../templates/templates.dto';
@@ -575,7 +575,7 @@ export class EnvelopesService {
       if (docs.length === 0) throw Errors.unprocessable('ENVELOPE_WITHOUT_DOCUMENTS', 'Adicione ao menos um documento.');
       if (signers.length === 0) throw Errors.unprocessable('ENVELOPE_WITHOUT_SIGNERS', 'Adicione ao menos um signatário.');
       if (!signers.some((s) => s.required)) throw Errors.unprocessable('ENVELOPE_WITHOUT_REQUIRED_SIGNER', 'Ao menos um signatário deve ser obrigatório.');
-      for (const s of signers) assertAuthMethodAvailable(s.authMethod);
+      assertSignersActivatable(signers);
 
       const now = new Date();
       await tx.envelope.update({ where: { id: envelopeId }, data: { status: EnvelopeStatus.ACTIVE, activatedAt: now } });
