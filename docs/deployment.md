@@ -89,24 +89,32 @@ Empresarial R$ 199 (200), todos com +10% de bônus; extras de 10/25/50 documento
 
 ### Contratação online (Mercado Pago)
 
-Checkout Pro: o backend cria a cobrança e o cliente paga na página do Mercado Pago (Pix ou cartão à vista —
-boleto e parcelamento desativados). O plano (ou o pacote) só é liberado pelo backend depois de consultar o
-pagamento na API do Mercado Pago e conferir referência, valor e moeda. Nenhuma credencial vai ao navegador.
+Checkout Transparente: o pagamento acontece dentro do Adapter Sign (página **Plano**), sem sair do site.
 
-1. Mercado Pago → **Suas integrações** → crie a aplicação (Checkout Pro) e copie o **Access Token** de produção.
-2. Em **Webhooks** da aplicação: URL `https://sign.adapterco.com.br/api/v1/billing/webhooks/mercadopago`,
-   evento **Pagamentos**; copie a **chave secreta** gerada.
-3. No `.env`: `BILLING_PROVIDER=mercadopago`, `MERCADOPAGO_ACCESS_TOKEN=...`, `MERCADOPAGO_WEBHOOK_SECRET=...`
-   e recrie `adaptersign-api` e `adaptersign-worker`.
-4. Sincronize os planos e pacotes (comando acima).
+- **Pix:** o backend cria o pagamento no Mercado Pago e a tela exibe o QR Code e o copia-e-cola.
+- **Cartão (crédito/débito, à vista):** o componente oficial do Mercado Pago transforma o cartão em um token de
+  uso único no navegador; o backend cria o pagamento com esse token. O número do cartão não passa pelo servidor.
+- **Segurança:** o valor sai sempre do banco, o parcelamento é forçado para 1 e o plano/pacote só é liberado depois
+  que o backend consulta o pagamento no Mercado Pago e confere referência, valor e moeda. O navegador recebe apenas a
+  **Public Key**, que é pública por definição. O Access Token e a chave do webhook ficam só no `.env`.
 
-Homologação: use as credenciais de **teste** da aplicação e `MERCADOPAGO_USE_SANDBOX_URL=true`, pague com um
-usuário comprador de teste e os cartões de teste do Mercado Pago; depois volte às credenciais de produção.
+Configuração:
 
-Regras: cada pagamento aprovado libera 1 mês. Renovar o mesmo plano soma ao fim do período; trocar de plano
-começa na aprovação (sem proporcional). Sem renovação automática: ao vencer, a conta volta ao plano `FREE`.
-Estorno ou contestação do pagamento vigente suspende o plano; de um pacote, retira o saldo restante.
-Se uma notificação se perder, a tela do cliente reconsulta o Mercado Pago ao voltar do pagamento.
+1. Mercado Pago → **Suas integrações** → aplicação (Checkout Transparente) → **Credenciais de produção**: copie a
+   **Public Key** e o **Access Token**.
+2. **Webhooks** (modo de produção): URL `https://sign.adapterco.com.br/api/v1/billing/webhooks/mercadopago`, evento
+   **Pagamentos**; copie a **assinatura secreta**.
+3. No `.env`: `BILLING_PROVIDER=mercadopago`, `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_PUBLIC_KEY` e
+   `MERCADOPAGO_WEBHOOK_SECRET`; recrie `adaptersign-api`, `adaptersign-worker` e `adaptersign-web`.
+4. Sincronize os planos e pacotes (comando da seção anterior).
+
+Homologação: use as credenciais de **teste** (e a assinatura do webhook do modo de teste) com os cartões de teste do
+Mercado Pago; depois troque para as de produção.
+
+Regras: cada pagamento aprovado libera 1 mês. Renovar o mesmo plano soma ao fim do período; trocar de plano começa
+na aprovação (sem proporcional). Sem renovação automática: ao vencer, a conta volta ao plano `FREE`. O Pix vale 30
+minutos (dá para gerar outro). Se um cartão for aprovado com um Pix pendente, o Pix é cancelado. Estorno ou
+contestação suspende o plano; de um pacote, retira o saldo restante.
 
 ### Administrador da plataforma
 

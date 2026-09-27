@@ -45,7 +45,7 @@ Todas as licenças são MIT, MIT-0 ou Apache-2.0. Rode `npm audit` antes de cada
    Prisma 7.10 (`overrides` do npm não as substituem). Só afetam o CLI, que roda no container `migrate`; `mysql2`
    nem é usado (o banco é PostgreSQL). Correção: atualizar o Prisma quando houver versão estável que as resolva.
 3. Termos de uso e política de privacidade não existem (dependem do jurídico).
-4. Pagamento: Mercado Pago Checkout Pro, pré-pago mensal (sem assinatura recorrente) e pacotes de documentos extras. Não há troca de plano com valor proporcional nem aviso por e-mail antes do vencimento.
+4. Pagamento: Mercado Pago Checkout Transparente (Pix e cartão na própria página), pré-pago mensal (sem assinatura recorrente) e pacotes de documentos extras. Não há troca de plano com valor proporcional nem aviso por e-mail antes do vencimento.
 5. WhatsApp: implementado para convites, lembretes, códigos e conclusão (número central, Evolution API v2).
    Mensagens interativas e respostas do signatário pelo WhatsApp não são tratadas.
 6. Envio em lote, SMS, biometria, ICP-Brasil e white label estão apenas preparados (enum, schema e feature flags), não implementados.

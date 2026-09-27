@@ -112,7 +112,9 @@ marcadores de texto — onde os campos devem aparecer:
 | Método | Rota | Descrição |
 | --- | --- | --- |
 | GET | `/billing` | Plano atual, cota do mês (`limit`, `bonus`, `used`, `credits`), planos e pacotes |
-| POST | `/billing/checkout` `{ "planCode" }` ou `{ "packCode" }` | (OWNER/ADMIN, sessão) devolve `{ paymentId, url }` — URL da página do Mercado Pago |
+| POST | `/billing/checkout` `{ "planCode" }` ou `{ "packCode" }` | (OWNER/ADMIN, sessão) cria o pedido — `{ paymentId, amountCents, description }` (valor definido no servidor) |
+| POST | `/billing/payments/:id/pix` | Gera (ou reaproveita) o Pix: `pix.qrCode` (copia e cola), `pix.qrCodeBase64`, `pix.expiresAt` |
+| POST | `/billing/payments/:id/card` `{ token, paymentMethodId, issuerId?, payerEmail?, identificationType?, identificationNumber? }` | Paga com o token do componente de cartão do Mercado Pago (sempre à vista; valor/parcelas não são aceitos) |
 | GET | `/billing/payments` · `/billing/payments/:id` | Histórico e situação (reconsulta o provedor se em aberto) |
 
 Ao atingir o limite do plano + bônus + extras, criar envelopes responde `402 PLAN_LIMIT_REACHED` com
