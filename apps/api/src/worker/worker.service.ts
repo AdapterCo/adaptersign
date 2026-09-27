@@ -16,6 +16,7 @@ import { APP_CONFIG, type AppConfig } from '../config/config';
 import { DomainEvent } from '../modules/outbox/domain-events';
 import { NotificationDispatcherService } from '../modules/notifications/notification-dispatcher.service';
 import { EmailSenderService } from '../modules/notifications/email-sender.service';
+import { PlanExpiryService } from '../modules/notifications/plan-expiry.service';
 import { WebhooksService } from '../modules/webhooks/webhooks.service';
 import { WebhookDeliveryService } from '../modules/webhooks/webhook-delivery.service';
 import { FinalizationIntegrityError, FinalizationService } from '../modules/evidence/finalization.service';
@@ -40,6 +41,7 @@ export class WorkerService implements OnApplicationBootstrap, OnApplicationShutd
     private readonly webhookDelivery: WebhookDeliveryService,
     private readonly finalization: FinalizationService,
     private readonly lifecycle: EnvelopeLifecycleService,
+    private readonly planExpiry: PlanExpiryService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -82,6 +84,7 @@ export class WorkerService implements OnApplicationBootstrap, OnApplicationShutd
       ['sweep-outbox', 60_000, 'sweep_outbox'],
       ['sweep-webhooks', 5 * 60_000, 'sweep_webhooks'],
       ['cleanup', 6 * 3600_000, 'cleanup'],
+      ['plan-expiry-notices', 3600_000, 'plan_expiry_notices'],
     ];
     for (const [id, every, task] of schedules) {
       await maintenance.upsertJobScheduler(id, { every }, { name: 'maintenance', data: { task } });
@@ -138,6 +141,11 @@ export class WorkerService implements OnApplicationBootstrap, OnApplicationShutd
             backoff: { type: 'exponential', delay: 60_000 },
           });
         }
+        return;
+      }
+      case 'plan_expiry_notices': {
+        const n = await this.planExpiry.queueNotices();
+        if (n) this.logger.log({ event: 'plan_expiry_notices_queued', count: n });
         return;
       }
       case 'send_reminders': {

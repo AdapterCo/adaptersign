@@ -116,9 +116,26 @@ export class EmailSenderService {
       case 'user_password_reset':
       case 'user_invitation':
         return this.prepareUser(template, String(data.userId), data.organizationId ? String(data.organizationId) : null);
+      case 'plan_expiring':
+      case 'plan_expired':
+        return this.preparePlanExpiry(template, String(data.userId), String(data.organizationId), new Date(String(data.periodEnd)));
       default:
         return { email: null, skipReason: `template desconhecido: ${template}` };
     }
+  }
+
+  /** Confere de novo no envio: se o plano já foi renovado (outro período), o aviso não sai. */
+  private async preparePlanExpiry(template: 'plan_expiring' | 'plan_expired', userId: string, organizationId: string, periodEnd: Date): Promise<Prepared> {
+    const [user, sub] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, deletedAt: true } }),
+      this.prisma.subscription.findUnique({ where: { organizationId }, include: { plan: { select: { name: true } }, organization: { select: { name: true } } } }),
+    ]);
+    if (!user || user.deletedAt || !sub) return { email: null, skipReason: 'destinatário ou assinatura indisponível' };
+    if (sub.status !== 'ACTIVE' || sub.currentPeriodEnd?.getTime() !== periodEnd.getTime()) {
+      return { email: null, skipReason: 'plano renovado ou alterado' };
+    }
+    const ctx = { name: user.name, organizationName: sub.organization.name, planName: sub.plan.name, periodEnd, link: this.link('/billing') };
+    return { email: template === 'plan_expiring' ? EmailTemplates.plan_expiring(this.brand, ctx) : EmailTemplates.plan_expired(this.brand, ctx) };
   }
 
   private async prepareInvite(signerId: string, reminder: boolean, notificationId: string, channel: Channel): Promise<Prepared> {

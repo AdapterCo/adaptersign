@@ -58,6 +58,14 @@ export interface EnvelopeStatusCtx {
   signerName?: string;
 }
 
+export interface PlanExpiryCtx {
+  name: string;
+  organizationName: string;
+  planName: string;
+  periodEnd: Date;
+  link: string;
+}
+
 export interface UserLinkCtx {
   name: string;
   link: string;
@@ -238,6 +246,35 @@ export const EmailTemplates = {
       ),
     };
   },
+  plan_expiring(brand: Branding, c: PlanExpiryCtx): RenderedEmail {
+    const when = fmtDate(c.periodEnd);
+    return {
+      subject: `Seu plano ${c.planName} vence em ${when}`,
+      text: `Olá, ${c.name}.\n\nO plano ${c.planName} de ${c.organizationName} em ${brand.name} vence em ${when} (horário de Brasília). Não há renovação automática.\nPara continuar enviando documentos sem interrupção, renove: ${c.link}\n\nSeus documentos e assinaturas continuam guardados em qualquer caso.`,
+      html: layout(
+        brand,
+        'Seu plano está perto de vencer',
+        p(`Olá, ${escapeHtml(c.name)}.`) +
+          p(`O plano <strong>${escapeHtml(c.planName)}</strong> de <strong>${escapeHtml(c.organizationName)}</strong> vence em <strong>${escapeHtml(when)}</strong> (horário de Brasília). Não há renovação automática.`) +
+          p('Renove para continuar enviando documentos sem interrupção. Seus documentos e assinaturas continuam guardados em qualquer caso.'),
+        { label: 'Renovar plano', url: c.link },
+      ),
+    };
+  },
+  plan_expired(brand: Branding, c: PlanExpiryCtx): RenderedEmail {
+    return {
+      subject: `Seu plano ${c.planName} venceu`,
+      text: `Olá, ${c.name}.\n\nO plano ${c.planName} de ${c.organizationName} em ${brand.name} venceu em ${fmtDate(c.periodEnd)}. A conta voltou ao plano gratuito, com limite menor de envios.\nRenove para voltar aos limites contratados: ${c.link}\n\nNada foi apagado: documentos, envelopes e assinaturas continuam guardados.`,
+      html: layout(
+        brand,
+        'Seu plano venceu',
+        p(`Olá, ${escapeHtml(c.name)}.`) +
+          p(`O plano <strong>${escapeHtml(c.planName)}</strong> de <strong>${escapeHtml(c.organizationName)}</strong> venceu em ${escapeHtml(fmtDate(c.periodEnd))}. A conta voltou ao plano gratuito, com limite menor de envios.`) +
+          p('Nada foi apagado: documentos, envelopes e assinaturas continuam guardados. Renove para voltar aos limites contratados.'),
+        { label: 'Renovar plano', url: c.link },
+      ),
+    };
+  },
 } as const;
 
 export type EmailTemplateName =
@@ -253,4 +290,6 @@ export type EmailTemplateName =
   | 'signer_declined_owner'
   | 'user_verify_email'
   | 'user_password_reset'
-  | 'user_invitation';
+  | 'user_invitation'
+  | 'plan_expiring'
+  | 'plan_expired';

@@ -28,7 +28,7 @@ export interface FinalizationJob {
   requestId?: string | null;
 }
 export interface MaintenanceJob {
-  task: 'expire_envelopes' | 'send_reminders' | 'sweep_outbox' | 'sweep_webhooks' | 'cleanup';
+  task: 'expire_envelopes' | 'send_reminders' | 'sweep_outbox' | 'sweep_webhooks' | 'cleanup' | 'plan_expiry_notices';
 }
 
 const defaultJobOptions: JobsOptions = {
