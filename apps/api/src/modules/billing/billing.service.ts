@@ -1,4 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import type Redis from 'ioredis';
+import { REDIS } from '../../infra/redis/redis.provider';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   ActorType,
@@ -67,7 +69,23 @@ export class BillingService {
     private readonly limiter: RateLimitService,
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(REDIS) private readonly redis: Redis,
   ) {}
+
+  /** Uma tentativa de pagamento por vez para cada cobrança (evita cobrar duas vezes em cliques/abas simultâneos). */
+  private async withPaymentLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const key = `lock:billing-pay:${id}`;
+    const token = randomUUID();
+    const ok = await this.redis.set(key, token, 'PX', 60_000, 'NX');
+    if (!ok) throw Errors.conflict('PAYMENT_IN_PROGRESS', 'Já existe um pagamento sendo processado para este pedido. Aguarde alguns segundos.');
+    try {
+      return await fn();
+    } finally {
+      await this.redis
+        .eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", 1, key, token)
+        .catch(() => undefined);
+    }
+  }
 
   // ───────────── Consulta ─────────────
 
@@ -291,6 +309,10 @@ export class BillingService {
 
   /** Gera (ou reaproveita) o Pix da cobrança; o QR Code é exibido na tela do Adapter Sign. */
   async payWithPix(auth: AuthContext, id: string, client: ClientInfo) {
+    return this.withPaymentLock(id, () => this.payWithPixLocked(auth, id, client));
+  }
+
+  private async payWithPixLocked(auth: AuthContext, id: string, client: ClientInfo) {
     const { rec, description, userEmail } = await this.payable(auth, id);
     const now = new Date();
     const reusable =
@@ -338,6 +360,10 @@ export class BillingService {
    * componente do Mercado Pago. Valor, parcelas (1) e descrição são definidos aqui.
    */
   async payWithCard(auth: AuthContext, id: string, input: CardInput, client: ClientInfo) {
+    return this.withPaymentLock(id, () => this.payWithCardLocked(auth, id, input, client));
+  }
+
+  private async payWithCardLocked(auth: AuthContext, id: string, input: CardInput, client: ClientInfo) {
     const { rec, description, userEmail } = await this.payable(auth, id);
     await this.limiter.consume('billing_pay', auth.organizationId);
     const idDigits = input.identificationNumber?.replace(/\D/g, '') ?? '';
@@ -368,7 +394,15 @@ export class BillingService {
 
   /** Aplica o pagamento e, se aprovado, cancela outras tentativas pendentes (ex.: Pix gerado antes). */
   private async settle(payment: ProviderPayment, source: 'webhook' | 'reconcile' | 'card'): Promise<void> {
-    await this.apply(payment, source);
+    const outcome = await this.apply(payment, source);
+    if (outcome === 'duplicate') {
+      // Pago duas vezes (ex.: Pix e cartão quase ao mesmo tempo): o segundo é estornado automaticamente.
+      await this.provider
+        .refundPayment(payment.id)
+        .then(() => this.logger.warn({ event: 'billing_duplicate_refunded', providerPaymentId: payment.id }))
+        .catch((err: unknown) => this.logger.error({ event: 'billing_duplicate_refund_failed', providerPaymentId: payment.id, error: String(err) }));
+      return;
+    }
     if (payment.status !== 'approved' || !payment.externalReference) return;
     const others = await this.provider.findPaymentsByReference(payment.externalReference).catch(() => []);
     for (const o of others) {
@@ -397,13 +431,13 @@ export class BillingService {
   }
 
   /** Aplica o estado de um pagamento do provedor. Idempotente e serializado por cobrança. */
-  async apply(p: ProviderPayment, source: 'webhook' | 'reconcile' | 'card'): Promise<void> {
+  async apply(p: ProviderPayment, source: 'webhook' | 'reconcile' | 'card'): Promise<'duplicate' | void> {
     const ref = p.externalReference;
     if (!ref || !UUID.test(ref)) return;
     const next = mapProviderStatus(p.status);
     if (!next) return;
 
-    await this.prisma.tx(async (tx) => {
+    return this.prisma.tx(async (tx): Promise<'duplicate' | void> => {
       const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "billing_payments" WHERE "id" = ${ref}::uuid FOR UPDATE`;
       if (locked.length === 0) return;
       const rec = await tx.billingPayment.findUniqueOrThrow({ where: { id: ref } });
@@ -421,8 +455,13 @@ export class BillingService {
       // Outro pagamento do provedor para a mesma cobrança já aprovada (ex.: pago duas vezes): não libera de novo.
       if (rec.status === BillingPaymentStatus.APPROVED && rec.providerPaymentId && rec.providerPaymentId !== p.id) {
         if (next === BillingPaymentStatus.APPROVED) {
-          await this.audit.record(tx, { ...base, eventType: AuditEventType.BILLING_PAYMENT_MISMATCH, metadata: { ...providerInfo, reason: 'duplicate_payment' } });
+          await this.audit.record(tx, {
+            ...base,
+            eventType: AuditEventType.BILLING_PAYMENT_MISMATCH,
+            metadata: { ...providerInfo, reason: 'duplicate_payment', action: 'auto_refund' },
+          });
           this.logger.warn({ event: 'billing_duplicate_payment', paymentId: rec.id, providerPaymentId: p.id });
+          return 'duplicate';
         }
         return;
       }

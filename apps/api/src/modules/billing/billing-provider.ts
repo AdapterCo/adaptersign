@@ -57,6 +57,8 @@ export interface BillingProvider {
   createPixPayment(req: PixRequest): Promise<ProviderPayment>;
   createCardPayment(req: CardRequest): Promise<ProviderPayment>;
   cancelPayment(paymentId: string): Promise<void>;
+  /** Estorno total (idempotente por pagamento). */
+  refundPayment(paymentId: string): Promise<void>;
   getPayment(paymentId: string): Promise<ProviderPayment | null>;
   findPaymentsByReference(reference: string): Promise<ProviderPayment[]>;
   /** Assinatura da notificação (quando o provedor a envia). */
@@ -80,6 +82,9 @@ export class ManualBillingProvider implements BillingProvider {
     return Promise.reject(unavailable());
   }
   cancelPayment(): Promise<void> {
+    return Promise.resolve();
+  }
+  refundPayment(): Promise<void> {
     return Promise.resolve();
   }
   getPayment(): Promise<ProviderPayment | null> {
@@ -219,6 +224,12 @@ export class MercadoPagoBillingProvider implements BillingProvider {
   async cancelPayment(paymentId: string): Promise<void> {
     if (!/^\d{1,30}$/.test(paymentId)) return;
     await this.call('PUT', `/v1/payments/${paymentId}`, { status: 'cancelled' });
+  }
+
+  async refundPayment(paymentId: string): Promise<void> {
+    if (!/^\d{1,30}$/.test(paymentId)) return;
+    const { status } = await this.call('POST', `/v1/payments/${paymentId}/refunds`, {}, `refund-${paymentId}`);
+    if (status >= 300) throw Errors.unavailable('PAYMENT_PROVIDER_ERROR', 'Falha ao estornar o pagamento no Mercado Pago.');
   }
 
   async getPayment(paymentId: string): Promise<ProviderPayment | null> {

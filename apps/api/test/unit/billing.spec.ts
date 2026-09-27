@@ -117,6 +117,13 @@ describe('MercadoPagoBillingProvider (Checkout Transparente)', () => {
     expect((err as { code?: string }).code).toBe('PAYMENT_NOT_CREATED');
   });
 
+  it('estorno usa chave de idempotência por pagamento', async () => {
+    const { fn, calls } = fakeFetch(201, { id: 1 });
+    await provider(fn).refundPayment('555');
+    expect(calls[0].url).toBe('https://api.exemplo.test/v1/payments/555/refunds');
+    expect((calls[0].init.headers as Record<string, string>)['X-Idempotency-Key']).toBe('refund-555');
+  });
+
   it('consulta pagamento e ignora ids inválidos', async () => {
     const p = provider(fakeFetch(200, { id: 123, status: 'approved', external_reference: 'ref', transaction_amount: 49.9, currency_id: 'BRL', payment_type_id: 'credit_card' }).fn);
     await expect(p.getPayment('123')).resolves.toMatchObject({ id: '123', status: 'approved', amountCents: 4990, pix: null });

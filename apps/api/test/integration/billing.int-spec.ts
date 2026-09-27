@@ -64,6 +64,13 @@ class FakeProvider implements BillingProvider {
     if (p) this.payments.set(id, { ...p, status: 'cancelled' });
     return Promise.resolve();
   }
+  readonly refunded: string[] = [];
+  refundPayment(id: string) {
+    this.refunded.push(id);
+    const p = this.payments.get(id);
+    if (p) this.payments.set(id, { ...p, status: 'refunded' });
+    return Promise.resolve();
+  }
   getPayment(id: string) {
     return Promise.resolve(this.payments.get(id) ?? null);
   }
@@ -181,6 +188,13 @@ describe('Contratação de plano — Checkout Transparente (provedor simulado)',
     expect(fake.cancelled).toContain(pendingPix);
     // Renovação do mesmo plano soma ao período.
     expect(new Date((await current()).periodEnd!).getTime() - before).toBeGreaterThan(27 * 86400_000);
+
+    // Pix pago "ao mesmo tempo" que o cartão: o duplicado é estornado automaticamente, sem liberar de novo.
+    const endBeforeDup = new Date((await current()).periodEnd!).getTime();
+    fake.set(pendingPix, { status: 'approved', amountCents: price, approvedAt: new Date() });
+    await webhook(pendingPix).expect(200);
+    expect(fake.refunded).toContain(pendingPix);
+    expect(new Date((await current()).periodEnd!).getTime()).toBe(endBeforeDup);
 
     // Estorno do pagamento vigente: volta ao plano padrão.
     const cardId = [...fake.payments.values()].find((p) => p.externalReference === ref && p.status === 'approved')!.id;
