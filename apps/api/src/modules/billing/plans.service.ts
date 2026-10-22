@@ -33,7 +33,7 @@ export class PlansService {
     return fallback;
   }
 
-  /** Plano pago (não é o plano padrão/gratuito). */
+  /** Plano pago (não é o plano padrão — "Sem plano" — de quem não tem assinatura ativa). */
   isPaidPlan(plan: Plan): boolean {
     return plan.code !== this.config.DEFAULT_PLAN_CODE;
   }

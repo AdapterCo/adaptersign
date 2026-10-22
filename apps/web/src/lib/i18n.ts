@@ -343,7 +343,7 @@ const ptBR = {
     usingBonus: 'Você passou do limite do plano e está usando o bônus de 10% — um presente nosso.',
     credits: (n: number) => (n === 1 ? '1 documento extra disponível' : `${n} documentos extras disponíveis`),
     exhaustedPaid: 'Você usou o plano, o bônus e os extras deste mês. Compre documentos extras abaixo para continuar enviando.',
-    exhaustedFree: 'Limite do plano gratuito atingido. Contrate um plano para continuar enviando.',
+    exhaustedFree: 'Você ainda não tem um plano ativo. Contrate um plano para enviar documentos para assinatura — seus rascunhos ficam guardados.',
     unlimited: 'Documentos ilimitados.',
     offline: 'Pagamento online ainda não está disponível. Contate o suporte para contratar.',
     ownerOnly: 'Somente administradores da conta podem contratar ou comprar documentos.',

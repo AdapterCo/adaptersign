@@ -264,13 +264,13 @@ export const EmailTemplates = {
   plan_expired(brand: Branding, c: PlanExpiryCtx): RenderedEmail {
     return {
       subject: `Seu plano ${c.planName} venceu`,
-      text: `Olá, ${c.name}.\n\nO plano ${c.planName} de ${c.organizationName} em ${brand.name} venceu em ${fmtDate(c.periodEnd)}. A conta voltou ao plano gratuito, com limite menor de envios.\nRenove para voltar aos limites contratados: ${c.link}\n\nNada foi apagado: documentos, envelopes e assinaturas continuam guardados.`,
+      text: `Olá, ${c.name}.\n\nO plano ${c.planName} de ${c.organizationName} em ${brand.name} venceu em ${fmtDate(c.periodEnd)}. A conta ficou sem plano ativo: novos envios para assinatura ficam bloqueados até a renovação.\nRenove para voltar a enviar: ${c.link}\n\nNada foi apagado: documentos, envelopes e assinaturas continuam guardados e acessíveis.`,
       html: layout(
         brand,
         'Seu plano venceu',
         p(`Olá, ${escapeHtml(c.name)}.`) +
-          p(`O plano <strong>${escapeHtml(c.planName)}</strong> de <strong>${escapeHtml(c.organizationName)}</strong> venceu em ${escapeHtml(fmtDate(c.periodEnd))}. A conta voltou ao plano gratuito, com limite menor de envios.`) +
-          p('Nada foi apagado: documentos, envelopes e assinaturas continuam guardados. Renove para voltar aos limites contratados.'),
+          p(`O plano <strong>${escapeHtml(c.planName)}</strong> de <strong>${escapeHtml(c.organizationName)}</strong> venceu em ${escapeHtml(fmtDate(c.periodEnd))}. A conta ficou sem plano ativo: novos envios para assinatura ficam bloqueados até a renovação.`) +
+          p('Nada foi apagado: documentos, envelopes e assinaturas continuam guardados e acessíveis. Renove para voltar a enviar.'),
         { label: 'Renovar plano', url: c.link },
       ),
     };
