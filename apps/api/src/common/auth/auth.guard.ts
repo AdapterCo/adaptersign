@@ -5,7 +5,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { EncryptionService } from '../crypto/encryption.service';
 import { AppError, Errors } from '../errors/app-error';
 import { hasPermission, type AuthContext, type PermissionValue } from './auth-context';
-import { IS_PUBLIC, PLATFORM_ADMIN, REQUIRED_PERMISSION, USER_ONLY, type AuthedRequest } from './decorators';
+import { ALLOW_WITHOUT_PLAN, IS_PUBLIC, PLATFORM_ADMIN, REQUIRED_PERMISSION, USER_ONLY, type AuthedRequest } from './decorators';
 import { ACCESS_COOKIE, API_KEY_PREFIX, type AccessTokenClaims } from './tokens';
 import { PlansService } from '../../modules/billing/plans.service';
 import { UsageService } from '../../modules/billing/usage.service';
@@ -42,6 +42,17 @@ export class AuthGuard implements CanActivate {
     }
     const permission = this.reflector.getAllAndOverride<PermissionValue | undefined>(REQUIRED_PERMISSION, targets);
     if (permission && !hasPermission(auth.role, permission)) throw Errors.forbidden();
+
+    // Sem plano pago ativo não há uso gratuito: só consultas/downloads (ex.: contratos já assinados
+    // de um plano vencido) e as áreas de conta/contratação. API keys já exigem plano com API.
+    const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+    const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_WITHOUT_PLAN, targets);
+    if (write && !allowed && !(auth.kind === 'user' && auth.isPlatformAdmin)) {
+      const plan = await this.plans.planForOrganization(auth.organizationId);
+      if (!this.plans.isPaidPlan(plan)) {
+        throw new AppError('PAID_PLAN_REQUIRED', 'Contrate um plano para usar o Adapter Sign.', 402);
+      }
+    }
     return true;
   }
 

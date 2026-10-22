@@ -3,7 +3,7 @@ import { ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsEnum, IsString, Length, MaxLength } from 'class-validator';
 import type { Request } from 'express';
 import { MemberRole } from '../../generated/prisma/client';
-import { CurrentAuth, RequirePermission, UserOnly } from '../../common/auth/decorators';
+import { AllowWithoutPlan, CurrentAuth, RequirePermission, UserOnly } from '../../common/auth/decorators';
 import { Permission, type AuthContext } from '../../common/auth/auth-context';
 import { clientInfo } from '../../common/http/client-info';
 import { OrganizationsService } from './organizations.service';
@@ -38,6 +38,7 @@ class ChangeRoleDto {
 }
 
 @ApiTags('organizations')
+@AllowWithoutPlan()
 @Controller('organizations/current')
 export class OrganizationsController {
   constructor(private readonly orgs: OrganizationsService) {}

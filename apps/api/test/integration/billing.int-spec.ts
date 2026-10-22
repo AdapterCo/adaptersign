@@ -126,6 +126,16 @@ describe('Contratação de plano — Checkout Transparente (provedor simulado)',
     await app?.close();
   });
 
+  it('sem plano pago não há uso gratuito: só conta e contratação', async () => {
+    expect((await agent.get('/api/v1/auth/me').expect(200)).body.subscriptionActive).toBe(false);
+    const blocked = await post('/api/v1/envelopes').send({ title: 'Teste sem plano' }).expect(402);
+    expect(blocked.body.error.code).toBe('PAID_PLAN_REQUIRED');
+    await post('/api/v1/templates').send({ key: `t-${run}`, name: 'Modelo', roles: [{ key: 'cliente', label: 'Cliente', signingGroup: 1 }] }).expect(402);
+    // Consultas e a área de contratação continuam acessíveis.
+    await agent.get('/api/v1/envelopes').expect(200);
+    await agent.get('/api/v1/billing').expect(200);
+  });
+
   it('Pix na própria página: pedido com valor do servidor, QR Code e liberação só após o provedor confirmar', async () => {
     const overview = (await agent.get('/api/v1/billing').expect(200)).body;
     expect(overview).toMatchObject({ onlinePayment: true, publicKey: 'TEST-chave-publica-simulada' });
@@ -156,6 +166,7 @@ describe('Contratação de plano — Checkout Transparente (provedor simulado)',
     await webhook(pixId).expect(200);
     const after = await current();
     expect(after.code).toBe(planCode);
+    expect((await agent.get('/api/v1/auth/me').expect(200)).body.subscriptionActive).toBe(true);
     const end1 = new Date(after.periodEnd!).getTime();
     expect(end1 - Date.now()).toBeGreaterThan(27 * 86400_000);
     await webhook(pixId).expect(200);

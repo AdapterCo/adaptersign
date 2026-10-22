@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Inject, Param, ParseUUIDPipe, Post, Qu
 import { ApiExcludeEndpoint, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsIn, IsOptional, Matches, MaxLength } from 'class-validator';
 import type { Request, Response } from 'express';
-import { CurrentAuth, Public, RequirePermission, UserOnly } from '../../common/auth/decorators';
+import { AllowWithoutPlan, CurrentAuth, Public, RequirePermission, UserOnly } from '../../common/auth/decorators';
 import { Permission, type AuthContext } from '../../common/auth/auth-context';
 import { clientInfo } from '../../common/http/client-info';
 import { RateLimit } from '../../common/rate-limit/rate-limit';
@@ -64,6 +64,7 @@ function firstString(v: unknown): string | null {
 }
 
 @ApiTags('billing')
+@AllowWithoutPlan()
 @Controller('billing')
 export class BillingController {
   constructor(

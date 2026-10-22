@@ -12,6 +12,7 @@ import { ROLE_PERMISSIONS, type AuthContext } from '../../common/auth/auth-conte
 import type { AccessTokenClaims } from '../../common/auth/tokens';
 import { RateLimitService } from '../../common/rate-limit/rate-limit';
 import { AuditService } from '../audit/audit.service';
+import { PlansService } from '../billing/plans.service';
 import { AuditEventType } from '../audit/audit-events';
 import { OutboxService, type EmittedEvent } from '../outbox/outbox.service';
 import { DomainEvent } from '../outbox/domain-events';
@@ -39,6 +40,7 @@ export class AuthService {
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly limiter: RateLimitService,
+    private readonly plans: PlansService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -380,7 +382,10 @@ export class AuthService {
       },
     });
     const current = user.memberships.find((m) => m.organization.id === auth.organizationId);
+    const plan = await this.plans.planForOrganization(auth.organizationId);
     return {
+      // false = sem plano pago ativo (conta nova ou plano vencido): a tela leva à contratação.
+      subscriptionActive: this.plans.isPaidPlan(plan),
       user: { id: user.id, name: user.name, email: user.email, emailVerified: !!user.emailVerifiedAt, isPlatformAdmin: user.isPlatformAdmin },
       organization: current?.organization ?? null,
       role: auth.role,

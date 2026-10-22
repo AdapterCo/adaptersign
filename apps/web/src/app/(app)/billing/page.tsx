@@ -43,7 +43,7 @@ interface Payment {
 const brl = (cents: number) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 function Billing() {
-  const { can, me } = useSession();
+  const { can, me, reload: reloadMe } = useSession();
   const manage = can('org:settings');
   const { data, error, reload } = useApi<Overview>('/billing');
   const { data: history, reload: reloadHistory } = useApi<Paginated<Payment>>(manage ? '/billing/payments?pageSize=10' : null);
@@ -53,7 +53,9 @@ function Billing() {
   const refresh = useCallback(() => {
     void reload();
     void reloadHistory();
-  }, [reload, reloadHistory]);
+    // Plano liberado: atualiza a sessão (remove o aviso de "sem plano" e libera o app).
+    void reloadMe();
+  }, [reload, reloadHistory, reloadMe]);
 
   async function buy(body: { planCode: string } | { packCode: string }, key: string) {
     setBusy(key);

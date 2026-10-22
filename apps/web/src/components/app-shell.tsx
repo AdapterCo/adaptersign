@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '@/lib/api';
 import { branding } from '@/lib/branding';
 import { t } from '@/lib/i18n';
@@ -15,6 +15,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [resent, setResent] = useState(false);
+  // Sem plano pago não há uso gratuito: a entrada do app leva direto à contratação.
+  const needsPlan = !!me && !me.subscriptionActive && !me.user.isPlatformAdmin;
+  useEffect(() => {
+    if (needsPlan && pathname === '/dashboard') router.replace('/billing');
+  }, [needsPlan, pathname, router]);
 
   const items = [
     { href: '/dashboard', label: t.nav.dashboard },
@@ -87,6 +92,16 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {t.auth.resendVerification}
                 </button>
               )}
+            </Alert>
+          </div>
+        )}
+        {needsPlan && pathname !== '/billing' && (
+          <div className="mb-6">
+            <Alert tone="warn">
+              <span>{t.billing.noPlanBanner} </span>
+              <Link href="/billing" className="font-semibold underline">
+                {t.billing.noPlanCta}
+              </Link>
             </Alert>
           </div>
         )}

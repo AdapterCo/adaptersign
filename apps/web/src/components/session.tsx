@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
 
 export interface Me {
+  subscriptionActive: boolean;
   user: { id: string; name: string; email: string; emailVerified: boolean; isPlatformAdmin: boolean };
   organization: { id: string; name: string; slug: string } | null;
   role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';

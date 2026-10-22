@@ -401,6 +401,8 @@ const ptBR = {
     waiting: 'Aguardando a confirmação do pagamento pelo Mercado Pago. Esta página atualiza sozinha.',
     notApproved: 'O pagamento não foi aprovado. Você pode tentar novamente.',
     limitLink: 'Ver planos e documentos extras',
+    noPlanBanner: 'Sua conta ainda não tem um plano ativo. Contrate um plano para começar a usar.',
+    noPlanCta: 'Ver planos',
     noPlans: 'Nenhum plano pago disponível no momento. Contate o suporte.',
     noPacks: 'Nenhum pacote de documentos extras disponível no momento.',
     method: { credit_card: 'Cartão de crédito', debit_card: 'Cartão de débito', bank_transfer: 'Pix', account_money: 'Saldo Mercado Pago' } as Record<string, string>,

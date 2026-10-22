@@ -73,6 +73,21 @@ describe('Fluxo completo de assinatura (E2E)', () => {
 
   const post = (a: Agent, url: string) => a.post(url).set('Origin', ORIGIN);
 
+  /** Não há uso gratuito: as empresas do teste recebem um plano pago (sem vencimento). */
+  async function grantPaidPlan(email: string): Promise<void> {
+    const plan = await prisma.plan.upsert({
+      where: { code: 'TEST_PAID' },
+      create: { code: 'TEST_PAID', name: 'Pago (teste)', monthlyEnvelopes: 100, monthlyDocuments: 100, apiAccess: true, webhooks: true, priceCents: 100, currency: 'BRL' },
+      update: {},
+    });
+    const m = await prisma.organizationMember.findFirstOrThrow({ where: { user: { email } } });
+    await prisma.subscription.upsert({
+      where: { organizationId: m.organizationId },
+      create: { organizationId: m.organizationId, planId: plan.id, status: 'ACTIVE', provider: 'manual', currentPeriodStart: new Date() },
+      update: { planId: plan.id, status: 'ACTIVE', currentPeriodEnd: null },
+    });
+  }
+
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false });
@@ -98,6 +113,7 @@ describe('Fluxo completo de assinatura (E2E)', () => {
 
   it('cadastra empresa A e usuário (login via cookie HttpOnly)', async () => {
     const res = await post(ownerA, '/api/v1/auth/register').send({ organizationName: `Empresa A ${run}`, name: 'Dona A', email: emailA, password }).expect(201);
+    await grantPaidPlan(emailA);
     expect(String(res.headers['set-cookie'])).toMatch(/HttpOnly/i);
     // Confirmação de e-mail pelo link enviado.
     const mail = await latestEmail(emailA, 'Confirme seu e-mail');
@@ -135,6 +151,7 @@ describe('Fluxo completo de assinatura (E2E)', () => {
 
   it('bloqueia acesso cruzado entre tenants (IDOR)', async () => {
     await post(ownerB, '/api/v1/auth/register').send({ organizationName: `Empresa B ${run}`, name: 'Dono B', email: emailB, password }).expect(201);
+    await grantPaidPlan(emailB);
     await ownerB.get(`/api/v1/envelopes/${envelopeId}`).expect(404);
     await ownerB.get(`/api/v1/documents/${documentId}`).expect(404);
     await post(ownerB, `/api/v1/envelopes/${envelopeId}/cancel`).send({}).expect(404);

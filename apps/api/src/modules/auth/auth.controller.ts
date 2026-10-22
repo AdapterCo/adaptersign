@@ -3,7 +3,7 @@ import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { APP_CONFIG, type AppConfig } from '../../config/config';
 import { clientInfo } from '../../common/http/client-info';
-import { CurrentAuth, Public, UserOnly } from '../../common/auth/decorators';
+import { AllowWithoutPlan, CurrentAuth, Public, UserOnly } from '../../common/auth/decorators';
 import type { AuthContext } from '../../common/auth/auth-context';
 import { ACCESS_COOKIE, REFRESH_COOKIE, cookieOptions } from '../../common/auth/tokens';
 import { RateLimit } from '../../common/rate-limit/rate-limit';
@@ -22,6 +22,7 @@ import {
 const REFRESH_PATH = '/api/v1/auth';
 
 @ApiTags('auth')
+@AllowWithoutPlan()
 @Controller('auth')
 export class AuthController {
   constructor(
